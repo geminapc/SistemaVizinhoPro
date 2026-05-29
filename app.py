@@ -1,12 +1,42 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
+from gspread_dataframe import set_with_dataframe
+import gspread
 
 st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout="centered")
 
-# Link definitivo da sua nova planilha
-LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1UY1Z2gSViOHBYbJXNbXMH8_ZbHtR_NPMgIZxlUMoy1g/edit"
+# --- CONEXÃO DIRETA SEM SECRETS ---
+dados_do_robo = {
+  "type": "service_account",
+  "project_id": "sistemavizinho",
+  "private_key_id": "b1b01777d56697b0bfd648fdf8be476903f0bbf3",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDh+tWkO5bJmZ8F\n4nUfPOn064yN+b/m/9v83f8Vw...\n-----END PRIVATE KEY-----\n",
+  "client_email": "sistemavizinho@sistemavizinho.iam.gserviceaccount.com",
+  "client_id": "116493623547849182390",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/sistemavizinho%40sistemavizinho.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
+
+# Conectando na planilha pelo ID direto
+try:
+    gc = gspread.service_account_from_dict(dados_do_robo)
+    planilha = gc.open_by_key("1UY1Z2gSViOHBYbJXNbXMH8_ZbHtR_NPMgIZxlUMoy1g")
+except Exception as e:
+    st.error(f"Erro ao conectar com o Google: {e}")
+
+def carregar_dados(aba):
+    sh = planilha.worksheet(aba)
+    dados = sh.get_all_records()
+    return pd.DataFrame(dados)
+
+def atualizar_dados(aba, df):
+    sh = planilha.worksheet(aba)
+    sh.clear()
+    set_with_dataframe(sh, df)
 
 # --- DESIGN PERSONALIZADO (CSS) ---
 st.markdown("""
@@ -32,11 +62,6 @@ st.markdown("""
     }
     </style>
     """, unsafe_allow_html=True)
-
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-def carregar_dados(aba):
-    return conn.read(spreadsheet=LINK_PLANILHA, worksheet=aba, ttl="0s")
 
 menu = st.selectbox("🎯 Escolha a Tela:", ["💰 Frente de Caixa", "📦 Estoque e Produtos", "📊 Painel do Caixa"])
 st.markdown("---")
@@ -120,10 +145,10 @@ if menu == "💰 Frente de Caixa":
                 }])
                 
                 df_vendas_atualizado = pd.concat([df_vendas, nova_venda], ignore_index=True)
-                conn.update(spreadsheet=LINK_PLANILHA, worksheet="vendas", data=df_vendas_atualizado)
+                atualizar_dados("vendas", df_vendas_atualizado)
                 
                 df_estoque.loc[df_estoque['produto'] == produto, 'quantidade'] -= unidades_saidas
-                conn.update(spreadsheet=LINK_PLANILHA, worksheet="estoque", data=df_estoque)
+                atualizar_dados("estoque", df_estoque)
                 
                 st.balloons()
                 st.success("Venda salva com sucesso!")
@@ -175,7 +200,7 @@ elif menu == "📦 Estoque e Produtos":
             else:
                 df_estoque = pd.concat([df_estoque, novo_p], ignore_index=True)
                 
-            conn.update(spreadsheet=LINK_PLANILHA, worksheet="estoque", data=df_estoque)
+            atualizar_dados("estoque", df_estoque)
             st.success(f"'{nome}' salvo com sucesso!")
             st.rerun()
         else:
@@ -199,6 +224,9 @@ else:
     if df_vendas.empty:
         st.info("Nenhuma venda computada ainda.")
     else:
+        df_vendas['valor_total'] = pd.to_numeric(df_vendas['valor_total'], errors='coerce').fillna(0.0)
+        df_vendas['lucro'] = pd.to_numeric(df_vendas['lucro'], errors='coerce').fillna(0.0)
+        
         tot_faturamento = df_vendas['valor_total'].sum()
         tot_lucro = df_vendas['lucro'].sum()
         
