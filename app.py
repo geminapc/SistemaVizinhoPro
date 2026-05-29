@@ -6,7 +6,7 @@ from datetime import datetime
 st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout="centered")
 
 # Link definitivo da sua nova planilha
-LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1UY1Z2gSViOHBYbJXNbXMH8_ZbHtR_NPMgIZxlUMoy1g/edit"
+LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1UY1Z2gSViOHBYbJXNbXMH8_ZbHtR_NPMgIZxlUMoy1g/edit?v=2"
 
 # --- DESIGN PERSONALIZADO (CSS) ---
 st.markdown("""
