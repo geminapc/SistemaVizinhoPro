@@ -1,42 +1,28 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from gspread_dataframe import set_with_dataframe
-import gspread
+import json
+import requests
+import base64
 
 st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout="centered")
 
-# --- CONEXÃO DIRETA SEM SECRETS ---
-dados_do_robo = {
-  "type": "service_account",
-  "project_id": "sistemavizinho",
-  "private_key_id": "b1b01777d56697b0bfd648fdf8be476903f0bbf3",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDh+tWkO5bJmZ8F\n4nUfPOn064yN+b/m/9v83f8Vw...\n-----END PRIVATE KEY-----\n",
-  "client_email": "sistemavizinho@sistemavizinho.iam.gserviceaccount.com",
-  "client_id": "116493623547849182390",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/sistemavizinho%40sistemavizinho.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
-}
+# --- CONFIGURAÇÃO AUTOMÁTICA DO GITHUB ---
+# O sistema vai usar o próprio GitHub para salvar os dados com segurança
+TOKEN = "ghp_sistemavizinhopro_definitivo_token_placeholder" # Não precisa mexer aqui se usar os Secrets
+REPO = "SistemaVizinhoPro"
 
-# Conectando na planilha pelo ID direto
+# Tentativa de carregar credenciais seguras do Streamlit, se houver
 try:
-    gc = gspread.service_account_from_dict(dados_do_robo)
-    planilha = gc.open_by_key("1UY1Z2gSViOHBYbJXNbXMH8_ZbHtR_NPMgIZxlUMoy1g")
-except Exception as e:
-    st.error(f"Erro ao conectar com o Google: {e}")
+    GITHUB_TOKEN = st.secrets["github"]["token"]
+    GITHUB_USER = st.secrets["github"]["username"]
+except:
+    # Fallback para o modo local de demonstração caso os secrets não estejam prontos
+    GITHUB_TOKEN = ""
+    GITHUB_USER = ""
 
-def carregar_dados(aba):
-    sh = planilha.worksheet(aba)
-    dados = sh.get_all_records()
-    return pd.DataFrame(dados)
-
-def atualizar_dados(aba, df):
-    sh = planilha.worksheet(aba)
-    sh.clear()
-    set_with_dataframe(sh, df)
+URL_ESTOQUE = f"https://api.github.com/repos/{GITHUB_USER}/{REPO}/contents/estoque.json" if GITHUB_USER else ""
+URL_VENDAS = f"https://api.github.com/repos/{GITHUB_USER}/{REPO}/contents/vendas.json" if GITHUB_USER else ""
 
 # --- DESIGN PERSONALIZADO (CSS) ---
 st.markdown("""
@@ -48,43 +34,56 @@ st.markdown("""
     }
     .stButton>button:hover { background-color: #1B5E20; color: white; }
     div[data-testid="stMetricValue"] { font-size: 24px; font-weight: bold; color: #1E88E5; }
-    .card-financeiro {
-        background-color: white; padding: 15px; border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 15px;
-    }
-    .card-preco-venda {
-        background-color: #E8F5E9; padding: 10px; border-radius: 8px;
-        border-left: 5px solid #2E7D32; margin-top: 10px; margin-bottom: 15px;
-    }
-    .card-troco {
-        background-color: #FFF3E0; padding: 10px; border-radius: 8px;
-        border-left: 5px solid #EF6C00; margin-top: 10px; margin-bottom: 15px;
-    }
+    .card-financeiro { background-color: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 15px; }
+    .card-preco-venda { background-color: #E8F5E9; padding: 10px; border-radius: 8px; border-left: 5px solid #2E7D32; margin-top: 10px; margin-bottom: 15px; }
+    .card-troco { background-color: #FFF3E0; padding: 10px; border-radius: 8px; border-left: 5px solid #EF6C00; margin-top: 10px; margin-bottom: 15px; }
     </style>
     """, unsafe_allow_html=True)
+
+def carregar_dados_github(url_alvo):
+    if not url_alvo or not GITHUB_TOKEN:
+        return []
+    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+    r = requests.get(url_alvo, headers=headers)
+    if r.status_code == 200:
+        conteudo = json.loads(base64.b64decode(r.json()["content"]).decode())
+        return conteudo
+    return []
+
+def salvar_dados_github(url_alvo, dados):
+    if not url_alvo or not GITHUB_TOKEN:
+        return
+    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+    r = requests.get(url_alvo, headers=headers)
+    sha = r.json()["sha"] if r.status_code == 200 else None
+    
+    conteudo_bytes = json.dumps(dados, indent=4).encode()
+    conteudo_b64 = base64.b64encode(conteudo_bytes).decode()
+    
+    payload = {"message": "Atualizando dados do sistema", "content": conteudo_b64}
+    if sha:
+        payload["sha"] = sha
+        
+    requests.put(url_alvo, headers=headers, json=payload)
+
+# Inicializando estados
+if "db_estoque" not in st.session_state:
+    st.session_state.db_estoque = carregar_dados_github(URL_ESTOQUE) if GITHUB_TOKEN else []
+if "db_vendas" not in st.session_state:
+    st.session_state.db_vendas = carregar_dados_github(URL_VENDAS) if GITHUB_TOKEN else []
 
 menu = st.selectbox("🎯 Escolha a Tela:", ["💰 Frente de Caixa", "📦 Estoque e Produtos", "📊 Painel do Caixa"])
 st.markdown("---")
 
-# -----------------------------------------------------------------------------------------
 # TELA 1: FRENTE DE CAIXA
-# -----------------------------------------------------------------------------------------
 if menu == "💰 Frente de Caixa":
     st.markdown("### 🛒 Registrar Venda")
+    df_estoque = pd.DataFrame(st.session_state.db_estoque)
     
-    try:
-        df_estoque = carregar_dados("estoque")
-    except:
-        df_estoque = pd.DataFrame()
-        
-    if df_estoque.empty or 'produto' not in df_estoque.columns:
+    if df_estoque.empty:
         st.warning("Cadastre seus produtos na aba de Estoque primeiro!")
     else:
-        df_estoque['quantidade'] = pd.to_numeric(df_estoque['quantidade'], errors='coerce').fillna(0).astype(int)
-        df_estoque['preco_venda'] = pd.to_numeric(df_estoque['preco_venda'], errors='coerce').fillna(0.0)
-        df_estoque['unidades_por_pacote'] = pd.to_numeric(df_estoque['unidades_por_pacote'], errors='coerce').fillna(1).astype(int)
-        
-        produtos_disponiveis = df_estoque[df_estoque['quantidade'] >= df_estoque['unidades_por_pacote']]['produto'].unique()
+        produtos_disponiveis = df_estoque[df_estoque['quantidade'] > 0]['produto'].unique()
         
         if len(produtos_disponiveis) == 0:
             st.error("🚨 Todos os produtos estão esgotados no estoque!")
@@ -96,151 +95,80 @@ if menu == "💰 Frente de Caixa":
             unidades_pack = int(detalhes['unidades_por_pacote'])
             estoque_atual_unidades = int(detalhes['quantidade'])
             
-            if detalhes['tipo_venda'] == "Fardo/Fechado":
-                estoque_visual = estoque_atual_unidades // unidades_pack
-                texto_estoque = f"{estoque_visual} fardos"
-                max_venda = estoque_visual
-            else:
-                texto_estoque = f"{estoque_atual_unidades} unidades"
-                max_venda = estoque_atual_unidades
+            estoque_visual = estoque_atual_unidades // unidades_pack if detalhes['tipo_venda'] == "Fardo/Fechado" else estoque_atual_unidades
+            texto_estoque = f"{estoque_visual} fardos" if detalhes['tipo_venda'] == "Fardo/Fechado" else f"{estoque_atual_unidades} unidades"
             
             c_preco, c_est = st.columns(2)
-            c_preco.metric("Preço de Venda", f"R$ {detalhes['preco_venda']:.2f}")
+            c_preco.metric("Preço de Venda", f"R$ {float(detalhes['preco_venda']):.2f}")
             c_est.metric("Disponível", texto_estoque)
             
-            qtd = st.number_input("Quantidade Vendida", min_value=1, max_value=int(max_venda), step=1)
-            total = qtd * detalhes['preco_venda']
+            qtd = st.number_input("Quantidade Vendida", min_value=1, max_value=int(estoque_visual) if estoque_visual > 0 else 1, step=1)
+            total = qtd * float(detalhes['preco_venda'])
             
             st.markdown(f"<h2>Total: :green[R$ {total:.2f}]</h2>", unsafe_allow_html=True)
             
             if pagamento == "💵 Dinheiro":
                 valor_pago = st.number_input("Valor entregue pelo cliente (R$)", min_value=float(total), step=1.0)
                 if valor_pago > total:
-                    troco = valor_pago - total
-                    st.markdown(f"""
-                    <div class="card-troco">
-                        <p style='margin:0; color:#E65100; font-size:14px;'>💵 Troco a devolver:</p>
-                        <h3 style='margin:0; color:#EF6C00;'>R$ {troco:.2f}</h3>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown(f'<div class="card-troco"><h3 style="margin:0; color:#EF6C00;">Troco: R$ {valor_pago - total:.2f}</h3></div>', unsafe_allow_html=True)
             
             if st.button("Confirmar Recebimento"):
                 unidades_saidas = qtd * unidades_pack
-                
-                try:
-                    df_vendas = carregar_dados("vendas")
-                except:
-                    df_vendas = pd.DataFrame()
-                    
                 custo_unitario_real = float(detalhes['custo']) / unidades_pack
                 lucro_total = total - (unidades_saidas * custo_unitario_real)
                 
-                nova_venda = pd.DataFrame([{
-                    "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"),
-                    "produto": produto,
-                    "quantidade": int(qtd),
-                    "valor_total": float(total),
-                    "lucro": float(lucro_total),
-                    "pagamento": pagamento
-                }])
+                st.session_state.db_vendas.append({
+                    "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"), "produto": produto,
+                    "quantidade": int(qtd), "valor_total": float(total), "lucro": float(lucro_total), "pagamento": pagamento
+                })
                 
-                df_vendas_atualizado = pd.concat([df_vendas, nova_venda], ignore_index=True)
-                atualizar_dados("vendas", df_vendas_atualizado)
+                for item in st.session_state.db_estoque:
+                    if item['produto'] == produto:
+                        item['quantidade'] -= unidades_saidas
                 
-                df_estoque.loc[df_estoque['produto'] == produto, 'quantidade'] -= unidades_saidas
-                atualizar_dados("estoque", df_estoque)
+                if GITHUB_TOKEN:
+                    salvar_dados_github(URL_ESTOQUE, st.session_state.db_estoque)
+                    salvar_dados_github(URL_VENDAS, st.session_state.db_vendas)
                 
                 st.balloons()
-                st.success("Venda salva com sucesso!")
+                st.success("Venda realizada com sucesso!")
                 st.rerun()
 
-# -----------------------------------------------------------------------------------------
 # TELA 2: ESTOQUE E PRODUTOS
-# -----------------------------------------------------------------------------------------
 elif menu == "📦 Estoque e Produtos":
     st.markdown("### 📦 Gerenciar Produtos e Preços")
-    
-    try:
-        df_estoque = carregar_dados("estoque")
-    except:
-        df_estoque = pd.DataFrame(columns=['produto', 'custo', 'margem', 'preco_venda', 'quantidade', 'unidades_por_pacote', 'tipo_venda'])
-        
-    nome = st.text_input("Nome do Item (Ex: Cerveja Skol Lata ou Cerveja Skol Fardo)").strip()
-    tipo = st.selectbox("Como esse item será vendido no balcão?", ["Unidade Avulsa", "Fardo/Fechado"])
-    
-    if tipo == "Fardo/Fechado":
-        pack = st.number_input("Quantas unidades vêm dentro desse fardo?", min_value=2, value=10, step=1)
-    else:
-        pack = 1
-        
-    custo = st.number_input("Preço de Custo total pago pelo item/fardo (R$)", min_value=0.0, step=0.10, value=0.0)
-    margem = st.number_input("Margem de Lucro Desejada (%)", min_value=0.0, value=50.0, step=5.0)
-    qtd_comprada = st.number_input(f"Quantidade de {'Fardos' if tipo == 'Fardo/Fechado' else 'Unidades'} para o estoque", min_value=0, step=1, value=0)
+    nome = st.text_input("Nome do Item").strip()
+    tipo = st.selectbox("Modelo de Venda", ["Unidade Avulsa", "Fardo/Fechado"])
+    pack = st.number_input("Unidades por pacote", min_value=1, value=10 if tipo == "Fardo/Fechado" else 1)
+    custo = st.number_input("Preço de Custo (R$)", min_value=0.0, value=0.0)
+    margem = st.number_input("Margem de Lucro (%)", min_value=0.0, value=50.0)
+    qtd_comprada = st.number_input("Quantidade para o estoque", min_value=0, value=0)
     
     preco_venda_sugerido = custo * (1 + (margem / 100))
-    st.markdown(f"""
-    <div class="card-preco-venda">
-        <p style='margin:0; color:#1B5E20; font-size:14px;'>💰 Preço Final de Venda Cadastrado:</p>
-        <h3 style='margin:0; color:#2E7D32;'>R$ {preco_venda_sugerido:.2f} {'por Fardo' if tipo == 'Fardo/Fechado' else 'por Unidade'}</h3>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f'<div class="card-preco-venda"><h3 style="margin:0; color:#2E7D32;">Preço Final: R$ {preco_venda_sugerido:.2f}</h3></div>', unsafe_allow_html=True)
     
     if st.button("Gravar no Estoque"):
         if nome:
-            total_unidades_estoque = int(qtd_comprada * pack)
-            
-            novo_p = pd.DataFrame([{
-                "produto": nome, "custo": custo, "margem": margem, 
-                "preco_venda": preco_venda_sugerido, "quantidade": total_unidades_estoque,
-                "unidades_por_pacote": pack, "tipo_venda": tipo
-            }])
-            
-            if not df_estoque.empty and nome in df_estoque['produto'].values:
-                df_estoque.loc[df_estoque['produto'] == nome] = [nome, custo, margem, preco_venda_sugerido, total_unidades_estoque, pack, tipo]
-            else:
-                df_estoque = pd.concat([df_estoque, novo_p], ignore_index=True)
-                
-            atualizar_dados("estoque", df_estoque)
-            st.success(f"'{nome}' salvo com sucesso!")
+            st.session_state.db_estoque.append({
+                "produto": nome, "custo": custo, "margem": margem, "preco_venda": preco_venda_sugerido,
+                "quantidade": int(qtd_comprada * pack), "unidades_por_pacote": pack, "tipo_venda": tipo
+            })
+            if GITHUB_TOKEN:
+                salvar_dados_github(URL_ESTOQUE, st.session_state.db_estoque)
+            st.success(f"'{nome}' adicionado!")
             st.rerun()
-        else:
-            st.error("Por favor, digite o nome do produto.")
 
     st.markdown("---")
-    st.markdown("#### 📋 Situação Atual do Estoque")
-    if not df_estoque.empty:
-        st.dataframe(df_estoque[['produto', 'preco_venda', 'quantidade', 'tipo_venda']].rename(columns={'produto': 'Produto', 'preco_venda': 'Preço Balcão', 'quantidade': 'Estoque (Total Unidades)', 'tipo_venda': 'Modelo'}), use_container_width=True)
+    if st.session_state.db_estoque:
+        st.dataframe(pd.DataFrame(st.session_state.db_estoque)[['produto', 'preco_venda', 'quantidade', 'tipo_venda']], use_container_width=True)
 
-# -----------------------------------------------------------------------------------------
 # TELA 3: PAINEL FINANCEIRO
-# -----------------------------------------------------------------------------------------
 else:
-    st.markdown("### 📊 Fechamento de Caixa e Lucros")
-    try:
-        df_vendas = carregar_dados("vendas")
-    except:
-        df_vendas = pd.DataFrame()
-        
-    if df_vendas.empty:
-        st.info("Nenhuma venda computada ainda.")
+    st.markdown("### 📊 Fechamento de Caixa")
+    if not st.session_state.db_vendas:
+        st.info("Nenhuma venda realizada ainda.")
     else:
-        df_vendas['valor_total'] = pd.to_numeric(df_vendas['valor_total'], errors='coerce').fillna(0.0)
-        df_vendas['lucro'] = pd.to_numeric(df_vendas['lucro'], errors='coerce').fillna(0.0)
-        
-        tot_faturamento = df_vendas['valor_total'].sum()
-        tot_lucro = df_vendas['lucro'].sum()
-        
-        st.markdown(f"""
-        <div class="card-financeiro">
-            <p style='margin:0; color:#666;'>💰 Faturamento Bruto</p>
-            <h2 style='margin:0; color:#2E7D32;'>R$ {tot_faturamento:.2f}</h2>
-        </div>
-        <div class="card-financeiro">
-            <p style='margin:0; color:#666;'>📈 Lucro Líquido Real (Dinheiro no Bolso)</p>
-            <h2 style='margin:0; color:#1565C0;'>R$ {tot_lucro:.2f}</h2>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("#### 💸 Entradas por Tipo de Pagamento")
-        resumo_pagos = df_vendas.groupby("pagamento")["valor_total"].sum().reset_index()
-        st.dataframe(resumo_pagos.rename(columns={'pagamento': 'Forma', 'valor_total': 'Total (R$)'}), use_container_width=True)
+        df_vendas = pd.DataFrame(st.session_state.db_vendas)
+        st.markdown(f'<div class="card-financeiro">💰 Faturamento Bruto: <h2>R$ {df_vendas["valor_total"].sum():.2f}</h2></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="card-financeiro">📈 Lucro Líquido Real: <h2>R$ {df_vendas["lucro"].sum():.2f}</h2></div>', unsafe_allow_html=True)
+        st.dataframe(df_vendas, use_container_width=True)
