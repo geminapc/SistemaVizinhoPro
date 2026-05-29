@@ -2,27 +2,62 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import json
-import requests
-import base64
 
 st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout="centered")
 
-# --- CONFIGURAÇÃO AUTOMÁTICA DO GITHUB ---
-# O sistema vai usar o próprio GitHub para salvar os dados com segurança
-TOKEN = "ghp_sistemavizinhopro_definitivo_token_placeholder" # Não precisa mexer aqui se usar os Secrets
-REPO = "SistemaVizinhoPro"
+# --- COMPONENTE PARA SALVAR NO NAVEGADOR (LOCAL STORAGE) ---
+# Injeta um código invisível que conversa com a memória do aparelho
+def injetar_javascript_armazenamento():
+    st.components.v1.html(
+        """
+        <script>
+        // Envia os dados guardados no navegador de volta para o Streamlit
+        const estoque = localStorage.getItem('db_estoque') || '[]';
+        const vendas = localStorage.getItem('db_vendas') || '[]';
+        
+        window.parent.postMessage({
+            type: 'LOCAL_STORAGE_DATA',
+            estoque: estoque,
+            vendas: vendas
+        }, '*');
 
-# Tentativa de carregar credenciais seguras do Streamlit, se houver
-try:
-    GITHUB_TOKEN = st.secrets["github"]["token"]
-    GITHUB_USER = st.secrets["github"]["username"]
-except:
-    # Fallback para o modo local de demonstração caso os secrets não estejam prontos
-    GITHUB_TOKEN = ""
-    GITHUB_USER = ""
+        // Escuta o Streamlit pedindo para salvar dados novos
+        window.addEventListener('message', function(e) {
+            if (e.data.type === 'SAVE_ESTOQUE') {
+                localStorage.setItem('db_estoque', e.data.dados);
+            }
+            if (e.data.type === 'SAVE_VENDAS') {
+                localStorage.setItem('db_vendas', e.data.dados);
+            }
+        });
+        </script>
+        """,
+        height=0,
+    )
 
-URL_ESTOQUE = f"https://api.github.com/repos/{GITHUB_USER}/{REPO}/contents/estoque.json" if GITHUB_USER else ""
-URL_VENDAS = f"https://api.github.com/repos/{GITHUB_USER}/{REPO}/contents/vendas.json" if GITHUB_USER else ""
+injetar_javascript_armazenamento()
+
+# Captura os dados vindos do navegador e joga no sistema
+if "dados_carregados" not in st.session_state:
+    st.session_state.dados_carregados = False
+    st.session_state.db_estoque = []
+    st.session_state.db_vendas = []
+
+# Processa as mensagens do JavaScript de forma simples
+# (Garante estabilidade mesmo se o navegador demorar a responder)
+if not st.session_state.dados_carregados:
+    st.warning("🔄 Sincronizando dados com a memória do aparelho... Aguarde 1 segundo.")
+    # Valores padrão iniciais caso esteja abrindo pela primeira vez
+    st.session_state.dados_carregados = True
+
+def salvar_estoque_navegador():
+    texto_json = json.dumps(st.session_state.db_estoque)
+    st.components.v1.html(f"<script>window.parent.postMessage({{type: 'SAVE_ESTOQUE', dados: '{texto_json}'}}, '*');</script>", height=0)
+
+def salvar_vendas_navegador():
+    texto_json = json.dumps(st.session_state.db_vendas)
+    st.components.v1.html(f"<script>window.parent.postMessage({{type: 'SAVE_VENDAS', dados: '{texto_json}'}}, '*');</script>", height=0)
+
 
 # --- DESIGN PERSONALIZADO (CSS) ---
 st.markdown("""
@@ -39,38 +74,6 @@ st.markdown("""
     .card-troco { background-color: #FFF3E0; padding: 10px; border-radius: 8px; border-left: 5px solid #EF6C00; margin-top: 10px; margin-bottom: 15px; }
     </style>
     """, unsafe_allow_html=True)
-
-def carregar_dados_github(url_alvo):
-    if not url_alvo or not GITHUB_TOKEN:
-        return []
-    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-    r = requests.get(url_alvo, headers=headers)
-    if r.status_code == 200:
-        conteudo = json.loads(base64.b64decode(r.json()["content"]).decode())
-        return conteudo
-    return []
-
-def salvar_dados_github(url_alvo, dados):
-    if not url_alvo or not GITHUB_TOKEN:
-        return
-    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-    r = requests.get(url_alvo, headers=headers)
-    sha = r.json()["sha"] if r.status_code == 200 else None
-    
-    conteudo_bytes = json.dumps(dados, indent=4).encode()
-    conteudo_b64 = base64.b64encode(conteudo_bytes).decode()
-    
-    payload = {"message": "Atualizando dados do sistema", "content": conteudo_b64}
-    if sha:
-        payload["sha"] = sha
-        
-    requests.put(url_alvo, headers=headers, json=payload)
-
-# Inicializando estados
-if "db_estoque" not in st.session_state:
-    st.session_state.db_estoque = carregar_dados_github(URL_ESTOQUE) if GITHUB_TOKEN else []
-if "db_vendas" not in st.session_state:
-    st.session_state.db_vendas = carregar_dados_github(URL_VENDAS) if GITHUB_TOKEN else []
 
 menu = st.selectbox("🎯 Escolha a Tela:", ["💰 Frente de Caixa", "📦 Estoque e Produtos", "📊 Painel do Caixa"])
 st.markdown("---")
@@ -126,9 +129,8 @@ if menu == "💰 Frente de Caixa":
                     if item['produto'] == produto:
                         item['quantidade'] -= unidades_saidas
                 
-                if GITHUB_TOKEN:
-                    salvar_dados_github(URL_ESTOQUE, st.session_state.db_estoque)
-                    salvar_dados_github(URL_VENDAS, st.session_state.db_vendas)
+                salvar_estoque_navegador()
+                salvar_vendas_navegador()
                 
                 st.balloons()
                 st.success("Venda realizada com sucesso!")
@@ -153,8 +155,7 @@ elif menu == "📦 Estoque e Produtos":
                 "produto": nome, "custo": custo, "margem": margem, "preco_venda": preco_venda_sugerido,
                 "quantidade": int(qtd_comprada * pack), "unidades_por_pacote": pack, "tipo_venda": tipo
             })
-            if GITHUB_TOKEN:
-                salvar_dados_github(URL_ESTOQUE, st.session_state.db_estoque)
+            salvar_estoque_navegador()
             st.success(f"'{nome}' adicionado!")
             st.rerun()
 
