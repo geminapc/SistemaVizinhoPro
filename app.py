@@ -33,7 +33,7 @@ st.markdown("""
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados(aba):
-    return conn.read(worksheet=aba, ttl="0s")
+    return conn.read(spreadsheet="https://docs.google.com/spreadsheets/d/1UY1Z2gSViOHBYbJXNbXMH8_ZbHtR_NPMgIZxlUMoy1g/edit", worksheet=aba, ttl="0s")
 
 menu = st.selectbox("🎯 Escolha a Tela:", ["💰 Frente de Caixa", "📦 Estoque e Produtos", "📊 Painel do Caixa"])
 st.markdown("---")
