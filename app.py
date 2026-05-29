@@ -5,6 +5,9 @@ from datetime import datetime
 
 st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout="centered")
 
+# Link definitivo da sua nova planilha
+LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1UY1Z2gSViOHBYbJXNbXMH8_ZbHtR_NPMgIZxlUMoy1g/edit"
+
 # --- DESIGN PERSONALIZADO (CSS) ---
 st.markdown("""
     <style>
@@ -33,7 +36,7 @@ st.markdown("""
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados(aba):
-    return conn.read(spreadsheet="https://docs.google.com/spreadsheets/d/1UY1Z2gSViOHBYbJXNbXMH8_ZbHtR_NPMgIZxlUMoy1g/edit", worksheet=aba, ttl="0s")
+    return conn.read(spreadsheet=LINK_PLANILHA, worksheet=aba, ttl="0s")
 
 menu = st.selectbox("🎯 Escolha a Tela:", ["💰 Frente de Caixa", "📦 Estoque e Produtos", "📊 Painel do Caixa"])
 st.markdown("---")
@@ -117,10 +120,10 @@ if menu == "💰 Frente de Caixa":
                 }])
                 
                 df_vendas_atualizado = pd.concat([df_vendas, nova_venda], ignore_index=True)
-                conn.update(worksheet="vendas", data=df_vendas_atualizado)
+                conn.update(spreadsheet=LINK_PLANILHA, worksheet="vendas", data=df_vendas_atualizado)
                 
                 df_estoque.loc[df_estoque['produto'] == produto, 'quantidade'] -= unidades_saidas
-                conn.update(worksheet="estoque", data=df_estoque)
+                conn.update(spreadsheet=LINK_PLANILHA, worksheet="estoque", data=df_estoque)
                 
                 st.balloons()
                 st.success("Venda salva com sucesso!")
@@ -172,7 +175,7 @@ elif menu == "📦 Estoque e Produtos":
             else:
                 df_estoque = pd.concat([df_estoque, novo_p], ignore_index=True)
                 
-            conn.update(worksheet="estoque", data=df_estoque)
+            conn.update(spreadsheet=LINK_PLANILHA, worksheet="estoque", data=df_estoque)
             st.success(f"'{nome}' salvo com sucesso!")
             st.rerun()
         else:
