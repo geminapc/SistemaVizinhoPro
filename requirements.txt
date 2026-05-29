@@ -1,4 +1,3 @@
-gspread
-gspread-dataframe
 pandas
 streamlit
+requests
