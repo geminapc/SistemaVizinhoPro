@@ -1,12 +1,11 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from sqlalchemy import text  # Garante que o interpretador do banco funcione 100%
+from sqlalchemy import text  # Garante que os comandos SQL funcionem perfeitamente
 
 st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout="wide")
 
 # --- CONEXÃO COM O POSTGRESQL (SUPABASE) ---
-# Aqui criamos a variável 'conn' que o Python reclamou que estava faltando
 try:
     conn = st.connection("postgresql", type="sql")
 except Exception as e:
@@ -159,50 +158,167 @@ if tela == "💰 Frente de Caixa (Balcão)":
                         st.error(f"Falha ao salvar no banco: {err}")
 
 # -----------------------------------------------------------------------------------------
-# TELA 2: CONTROLE DE ESTOQUE
+# TELA 2: CONTROLE DE ESTOQUE (PRO)
 # -----------------------------------------------------------------------------------------
 elif tela == "📦 Controle de Estoque":
-    st.title("📦 Controle de Estoque")
-    
+    st.title("📦 Controle de Estoque Profissional")
+
     try:
-        df_estoque = conn.query("SELECT * FROM estoque ORDER BY produto;", ttl="0s")
-    except:
+        df_estoque = conn.query(
+            "SELECT * FROM estoque ORDER BY produto;",
+            ttl="0s"
+        )
+    except Exception as e:
+        st.error(f"Erro ao carregar estoque: {e}")
         df_estoque = pd.DataFrame()
-        
+
+    # ==========================
+    # BUSCA
+    # ==========================
+    busca = st.text_input(
+        "🔍 Buscar produto",
+        placeholder="Digite o nome do produto..."
+    )
+
+    if busca and not df_estoque.empty:
+        df_estoque = df_estoque[
+            df_estoque["produto"].str.contains(busca, case=False, na=False)
+        ]
+
+    # ==========================
+    # ALERTA DE ESTOQUE BAIXO
+    # ==========================
     if not df_estoque.empty:
-        st.dataframe(df_estoque[['produto', 'preco_venda', 'quantidade', 'tipo_venda']].rename(columns={
-            'produto': 'Produto', 'preco_venda': 'Preço de Venda', 'quantidade': 'Unidades em Estoque', 'tipo_venda': 'Modelo Venda'
-        }), use_container_width=True)
-    
-    st.markdown("### ➕ Adicionar / Atualizar Item")
-    with st.form("cadastro_prod"):
-        nome = st.text_input("Nome exato do item").strip()
-        tipo = st.selectbox("Modelo", ["Unidade Avulsa", "Fardo/Fechado"])
-        pack = st.number_input("Unidades por fardo (Para avulso deixe 1)", min_value=1, value=1)
-        custo = st.number_input("Preço de Custo Total (R$)", min_value=0.0)
-        margem = st.number_input("Margem (%)", min_value=0.0, value=50.0)
-        qtd = st.number_input("Quantidade de fardos/unidades compradas", min_value=0, value=0)
-        
-        btn_salvar = st.form_submit_button("💾 Gravar no Banco de Dados")
-        
-        if btn_salvar and nome:
-            preco_final = custo * (1 + (margem / 100))
-            unidades_totais = int(qtd * pack)
-            
+        produtos_baixos = df_estoque[df_estoque["quantidade"] <= 10]
+
+        if not produtos_baixos.empty:
+            st.warning(
+                f"⚠️ Atenção: {len(produtos_baixos)} produto(s) com estoque baixo (10 unidades ou menos)."
+            )
+
+    # ==========================
+    # LISTAGEM
+    # ==========================
+    st.subheader("📋 Estoque Atual")
+
+    if not df_estoque.empty:
+        df_exibicao = df_estoque[['produto', 'preco_venda', 'quantidade', 'tipo_venda']].rename(columns={
+            'produto': 'Nome do Produto',
+            'preco_venda': 'Preço de Venda (R$)',
+            'quantidade': 'Qtd em Estoque',
+            'tipo_venda': 'Modo de Venda'
+        })
+        st.dataframe(df_exibicao, use_container_width=True)
+    else:
+        st.info("Nenhum produto cadastrado.")
+
+    st.divider()
+
+    # ==========================
+    # CADASTRO / EDIÇÃO
+    # ==========================
+    st.subheader("➕ Cadastrar ou Atualizar Produto")
+
+    with st.form("cadastro_produto"):
+        nome = st.text_input("Produto")
+        tipo = st.selectbox("Tipo de Venda", ["Unidade Avulsa", "Fardo/Fechado"])
+        pack = st.number_input("Unidades por pacote/fardo (Para avulso deixe 1)", min_value=1, value=1)
+        custo = st.number_input("Preço de Custo Total (R$)", min_value=0.0, value=0.0, step=0.50)
+        margem = st.number_input("Margem (%)", min_value=0.0, value=50.0, step=5.0)
+        quantidade = st.number_input("Quantidade de fardos/unidades compradas", min_value=0, value=0)
+
+        salvar = st.form_submit_button("💾 Salvar Produto")
+
+        if salvar and nome:
+            preco_venda = custo * (1 + margem / 100)
+            unidades_totais = int(quantidade * pack)
+
             try:
                 with conn.session as session:
-                    query_salvar = text("""
+                    session.execute(
+                        text("""
                         INSERT INTO estoque (produto, custo, preco_venda, quantidade, unidades_por_pacote, tipo_venda)
-                        VALUES (:prod, :cust, :prec, :qtd, :pack, :tipo)
-                        ON CONFLICT (produto) 
-                        DO UPDATE SET custo = :cust, preco_venda = :prec, quantidade = estoque.quantidade + :qtd, unidades_por_pacote = :pack, tipo_venda = :tipo;
-                    """)
-                    session.execute(query_salvar, {"prod": nome, "cust": custo, "prec": preco_final, "qtd": unidades_totais, "pack": pack, "tipo": tipo})
+                        VALUES (:produto, :custo, :preco, :qtd, :pack, :tipo)
+                        ON CONFLICT (produto)
+                        DO UPDATE SET
+                            custo = :custo,
+                            preco_venda = :preco,
+                            quantidade = estoque.quantidade + :qtd,
+                            unidades_por_pacote = :pack,
+                            tipo_venda = :tipo
+                        """),
+                        {
+                            "produto": nome, "custo": custo, "preco": preco_venda,
+                            "qtd": unidades_totais, "pack": pack, "tipo": tipo
+                        }
+                    )
                     session.commit()
-                st.success(f"'{nome}' atualizado no Supabase!")
+                st.success(f"Produto '{nome}' salvo com sucesso!")
                 st.rerun()
             except Exception as e:
-                st.error(f"Erro ao salvar no banco: {e}")
+                st.error(f"Erro: {e}")
+
+    st.divider()
+
+    # ==========================
+    # AJUSTE MANUAL DE ESTOQUE
+    # ==========================
+    if not df_estoque.empty:
+        st.subheader("✏️ Ajustar Estoque Manualmente")
+
+        produto_ajuste = st.selectbox(
+            "Selecione o Produto para ajustar",
+            df_estoque["produto"].tolist(),
+            key="ajuste_produto"
+        )
+
+        qtd_atual = int(df_estoque[df_estoque["produto"] == produto_ajuste]["quantidade"].values[0])
+
+        nova_qtd = st.number_input(
+            "Nova Quantidade Exata em Estoque",
+            min_value=0,
+            value=qtd_atual
+        )
+
+        if st.button("Salvar Ajuste"):
+            try:
+                with conn.session as session:
+                    session.execute(
+                        text("UPDATE estoque SET quantidade = :qtd WHERE produto = :produto"),
+                        {"qtd": nova_qtd, "produto": produto_ajuste}
+                    )
+                    session.commit()
+                st.success("Estoque atualizado!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro: {e}")
+
+    st.divider()
+
+    # ==========================
+    # EXCLUIR PRODUTO
+    # ==========================
+    if not df_estoque.empty:
+        st.subheader("🗑️ Excluir Produto")
+
+        produto_excluir = st.selectbox(
+            "Produto para excluir",
+            df_estoque["produto"].tolist(),
+            key="excluir_produto"
+        )
+
+        if st.button("Excluir Produto Definitivamente"):
+            try:
+                with conn.session as session:
+                    session.execute(
+                        text("DELETE FROM estoque WHERE produto = :produto"),
+                        {"produto": produto_excluir}
+                    )
+                    session.commit()
+                st.success("Produto excluído!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro: {e}")
 
 # -----------------------------------------------------------------------------------------
 # TELA 3: PAINEL FINANCEIRO
