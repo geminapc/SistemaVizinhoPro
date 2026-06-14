@@ -36,10 +36,11 @@ with st.sidebar:
 if tela == "💰 Frente de Caixa (Balcão)":
     st.title("🛒 Frente de Caixa")
     
-    # Busca estoque atualizado do banco
+    # Busca estoque atualizado do banco de forma segura
     try:
         df_est = conn.query("SELECT * FROM estoque ORDER BY produto;", ttl="0s")
-    except:
+    except Exception as e:
+        st.error(f"Não foi possível ler o banco de dados: {e}")
         df_est = pd.DataFrame()
         
     if df_est.empty:
@@ -67,24 +68,35 @@ if tela == "💰 Frente de Caixa (Balcão)":
                 qtd_venda = st.number_input("Quantidade desejada", min_value=1, max_value=max(1, qtd_maxima), value=1, step=1)
                 
                 if st.button("➕ Adicionar ao Pedido"):
-                    # Verifica se o produto já está no carrinho para consolidar
                     ja_no_carrinho = False
                     for item in st.session_state.carrinho:
                         if item['produto'] == prod_selecionado:
                             if item['quantidade'] + qtd_venda <= qtd_maxima:
                                 item['quantidade'] += qtd_venda
                                 item['subtotal'] = item['quantidade'] * float(detalhes['preco_venda'])
+                                # Ajuste Cursor: Recalcula as unidades totais e custo na consolidação
+                                item['unidades_totais'] = item['quantidade'] * unidades_pack
+                                if detalhes['tipo_venda'] == "Fardo/Fechado":
+                                    item['custo_total'] = float(detalhes['custo']) * item['quantidade']
+                                else:
+                                    item['custo_total'] = (float(detalhes['custo']) / unidades_pack) * item['unidades_totais']
                                 ja_no_carrinho = True
                             else:
                                 st.error("Quantidade total excede o estoque disponível!")
                                 ja_no_carrinho = True
                     
                     if not ja_no_carrinho:
+                        # Ajuste Cursor: Separação correta de custo para Fardo vs Unidade
+                        if detalhes['tipo_venda'] == "Fardo/Fechado":
+                            custo_calculado = float(detalhes['custo']) * qtd_venda
+                        else:
+                            custo_calculado = (float(detalhes['custo']) / unidades_pack) * (qtd_venda * unidades_pack)
+
                         st.session_state.carrinho.append({
                             "produto": prod_selecionado,
                             "quantidade": qtd_venda,
                             "preco_venda": float(detalhes['preco_venda']),
-                            "custo_total": float(detalhes['custo']) * qtd_venda,
+                            "custo_total": custo_calculado,
                             "unidades_totais": qtd_venda * unidades_pack,
                             "subtotal": qtd_venda * float(detalhes['preco_venda'])
                         })
@@ -123,27 +135,26 @@ if tela == "💰 Frente de Caixa (Balcão)":
                     
                 if c_btn2.button("✅ Confirmar Venda"):
                     try:
+                        # Ajuste Cursor: Uso seguro de conexões ativas com tratamento de erro
                         with conn.session as session:
                             for item in st.session_state.carrinho:
-                                # Abater do banco de dados estoque
                                 session.execute(
                                     "UPDATE estoque SET quantidade = quantidade - :unidades WHERE produto = :prod;",
                                     {"unidades": item['unidades_totais'], "prod": item['produto']}
                                 )
-                                # Calcular lucro individual do lote
                                 lucro_item = item['subtotal'] - item['custo_total']
-                                # Registrar a venda no banco
                                 session.execute(
                                     "INSERT INTO vendas (data_hora, produto, quantidade, valor_total, lucro, pagamento) VALUES (:dt, :prod, :qtd, :val, :luc, :pag);",
                                     {
-                                        "dt": datetime.now().strftime("%d/%m/%Y %H:%M"), "prod": item['produto'],
-                                        "qtd": item['quantidade'], "val": item['subtotal'], "luc": lucro_item, "pag": forma_pagamento
+                                        "dt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), # Ajuste Cursor: Timestamp padronizado
+                                        "prod": item['produto'], "qtd": item['quantidade'], 
+                                        "val": item['subtotal'], "luc": lucro_item, "pag": forma_pagamento
                                     }
                                 )
                             session.commit()
                         st.session_state.carrinho = []
                         st.balloons()
-                        st.success("Venda registrada e estoque atualizado no Supabase!")
+                        st.success("Venda registrada e integrada ao Supabase!")
                         st.rerun()
                     except Exception as err:
                         st.error(f"Falha ao salvar no banco: {err}")
