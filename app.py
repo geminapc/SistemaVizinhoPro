@@ -1,10 +1,12 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from sqlalchemy import text  # Garante que o interpretador do banco funcione 100%
 
 st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout="wide")
 
 # --- CONEXÃO COM O POSTGRESQL (SUPABASE) ---
+# Aqui criamos a variável 'conn' que o Python reclamou que estava faltando
 try:
     conn = st.connection("postgresql", type="sql")
 except Exception as e:
@@ -74,7 +76,6 @@ if tela == "💰 Frente de Caixa (Balcão)":
                             if item['quantidade'] + qtd_venda <= qtd_maxima:
                                 item['quantidade'] += qtd_venda
                                 item['subtotal'] = item['quantidade'] * float(detalhes['preco_venda'])
-                                # Ajuste Cursor: Recalcula as unidades totais e custo na consolidação
                                 item['unidades_totais'] = item['quantidade'] * unidades_pack
                                 if detalhes['tipo_venda'] == "Fardo/Fechado":
                                     item['custo_total'] = float(detalhes['custo']) * item['quantidade']
@@ -86,7 +87,6 @@ if tela == "💰 Frente de Caixa (Balcão)":
                                 ja_no_carrinho = True
                     
                     if not ja_no_carrinho:
-                        # Ajuste Cursor: Separação correta de custo para Fardo vs Unidade
                         if detalhes['tipo_venda'] == "Fardo/Fechado":
                             custo_calculado = float(detalhes['custo']) * qtd_venda
                         else:
@@ -135,10 +135,8 @@ if tela == "💰 Frente de Caixa (Balcão)":
                     
                 if c_btn2.button("✅ Confirmar Venda"):
                     try:
-                        # Ajuste Cursor: Uso seguro de conexões ativas com tratamento de erro
                         with conn.session as session:
                             for item in st.session_state.carrinho:
-                               from sqlalchemy import text
                                 session.execute(
                                     text("UPDATE estoque SET quantidade = quantidade - :unidades WHERE produto = :prod;"),
                                     {"unidades": item['unidades_totais'], "prod": item['produto']}
@@ -193,7 +191,6 @@ elif tela == "📦 Controle de Estoque":
             
             try:
                 with conn.session as session:
-from sqlalchemy import text
                     query_salvar = text("""
                         INSERT INTO estoque (produto, custo, preco_venda, quantidade, unidades_por_pacote, tipo_venda)
                         VALUES (:prod, :cust, :prec, :qtd, :pack, :tipo)
