@@ -49,7 +49,7 @@ with st.sidebar:
     st.caption("Conectado ao Supabase PostgreSQL")
 
 # -----------------------------------------------------------------------------------------
-# TELA 1: FRENTE DE CAIXA (CARRINHO MULTI-ITENS)
+# TELA 1: FRENTE DE CAIXA
 # -----------------------------------------------------------------------------------------
 if tela == "💰 Frente de Caixa (Balcão)":
     st.title("🛒 Frente de Caixa")
@@ -149,23 +149,19 @@ if tela == "💰 Frente de Caixa (Balcão)":
                     try:
                         with conn.session as session:
                             for item in st.session_state.carrinho:
-                                # Captura estoque atual antes da venda para a auditoria
                                 res = session.execute(text("SELECT quantidade FROM estoque WHERE produto = :p;"), {"p": item['produto']}).fetchone()
                                 estoque_atual = res[0] if res else 0
                                 novo_estoque = estoque_atual - item['unidades_totais']
 
-                                # Abate do estoque
                                 session.execute(
                                     text("UPDATE estoque SET quantidade = :novo WHERE produto = :prod;"),
                                     {"novo": novo_estoque, "prod": item['produto']}
                                 )
-                                # Salva venda
                                 lucro_item = item['subtotal'] - item['custo_total']
                                 session.execute(
                                     text("INSERT INTO vendas (data_hora, produto, quantidade, valor_total, lucro, pagamento) VALUES (:dt, :prod, :qtd, :val, :luc, :pag);"),
                                     {"dt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "prod": item['produto'], "qtd": item['quantidade'], "val": item['subtotal'], "luc": lucro_item, "pag": forma_pagamento}
                                 )
-                                # REGISTRA NA AUDITORIA
                                 registrar_movimentacao(session, item['produto'], "VENDA", item['unidades_totais'], estoque_atual, novo_estoque, f"Venda no balcão via {forma_pagamento}")
                             
                             session.commit()
@@ -177,7 +173,7 @@ if tela == "💰 Frente de Caixa (Balcão)":
                         st.error(f"Falha ao salvar no banco: {err}")
 
 # -----------------------------------------------------------------------------------------
-# TELA 2: CONTROLE DE ESTOQUE (PRO COM AUDITORIA)
+# TELA 2: CONTROLE DE ESTOQUE
 # -----------------------------------------------------------------------------------------
 elif tela == "📦 Controle de Estoque":
     st.title("📦 Controle de Estoque Profissional")
@@ -193,8 +189,8 @@ elif tela == "📦 Controle de Estoque":
         df_estoque = df_estoque[df_estoque["produto"].str.contains(busca, case=False, na=False)]
 
     if not df_estoque.empty:
-        produtos_baixos = df_estoque[df_estoque["whitespace" if "quantidade" not in df_estoque else "quantidade"] <= 10]
-        if not ... and not produtos_baixos.empty:
+        produtos_baixos = df_estoque[df_estoque["quantidade"] <= 10]
+        if not produtos_baixos.empty:
             st.warning(f"⚠️ Atenção: {len(produtos_baixos)} produto(s) com estoque baixo (10 unidades ou menos).")
 
     st.subheader("📋 Estoque Atual")
@@ -224,7 +220,6 @@ elif tela == "📦 Controle de Estoque":
 
             try:
                 with conn.session as session:
-                    # Capturar estoque antigo se o produto já existir
                     res = session.execute(text("SELECT quantidade FROM estoque WHERE produto = :p;"), {"p": nome}).fetchone()
                     est_anterior = res[0] if res else 0
                     est_novo = est_anterior + unidades_totais
@@ -238,7 +233,6 @@ elif tela == "📦 Controle de Estoque":
                         """),
                         {"produto": nome, "custo": custo, "preco": preco_venda, "qtd": unidades_totais, "pack": pack, "tipo": tipo}
                     )
-                    # AUDITORIA
                     registrar_movimentacao(session, nome, "ENTRADA", unidades_totais, est_anterior, est_novo, "Entrada de mercadoria/Cadastro")
                     session.commit()
                 st.success(f"Produto '{nome}' salvo!")
@@ -261,7 +255,6 @@ elif tela == "📦 Controle de Estoque":
                         text("UPDATE estoque SET quantidade = :qtd WHERE produto = :produto"),
                         {"qtd": nova_qtd, "produto": produto_ajuste}
                     )
-                    # AUDITORIA
                     registrar_movimentacao(session, produto_ajuste, "AJUSTE", (nova_qtd - qtd_atual), qtd_atual, nova_qtd, "Ajuste manual de inventário")
                     session.commit()
                 st.success("Estoque atualizado!")
@@ -274,13 +267,12 @@ elif tela == "📦 Controle de Estoque":
     if not df_estoque.empty:
         st.subheader("🗑️ Excluir Produto")
         produto_excluir = st.selectbox("Produto para excluir", df_estoque["produto"].tolist(), key="excluir_produto")
-        qtd_antes_del = int(df_estoque[df_estoque["produto"] == produto_excluir]["whitespace" if "quantidade" not in df_estoque else "quantidade"].values[0])
+        qtd_antes_del = int(df_estoque[df_estoque["produto"] == produto_excluir]["quantidade"].values[0])
 
         if st.button("Excluir Produto Definitivamente"):
             try:
                 with conn.session as session:
                     session.execute(text("DELETE FROM estoque WHERE produto = :produto"), {"produto": produto_excluir})
-                    # AUDITORIA
                     registrar_movimentacao(session, produto_excluir, "EXCLUIR", qtd_antes_del, qtd_antes_del, 0, "Produto deletado do sistema")
                     session.commit()
                 st.success("Produto excluído!")
@@ -288,15 +280,15 @@ elif tela == "📦 Controle de Estoque":
             except Exception as e:
                 st.error(f"Erro: {e}")
 
-# ---------------- -------------------------------------------------------------------------
-# TELA 3: NOVA ABA - EXTRATO DE MOVIMENTAÇÕES
+# -----------------------------------------------------------------------------------------
+# TELA 3: EXTRATO DE MOVIMENTAÇÕES
 # -----------------------------------------------------------------------------------------
 elif tela == "📋 Extrato do Estoque":
     st.title("📋 Extrato e Auditoria de Estoque")
     st.caption("Acompanhe o histórico de todas as entradas, vendas e ajustes feitos no sistema.")
 
     try:
-        df_mov = conn.query("SELECT id, data_hora, produto, tipo_movimentacao, quantidade, estoque_anterior, estoque_novo, observacao FROM movimentacoes_estoque ORDER BY id DESC;", ttl="0s")
+        df_mov = conn.query("SELECT data_hora, produto, tipo_movimentacao, quantidade, estoque_anterior, estoque_novo, observacao FROM movimentacoes_estoque ORDER BY id DESC;", ttl="0s")
     except:
         df_mov = pd.DataFrame()
 
@@ -307,23 +299,68 @@ elif tela == "📋 Extrato do Estoque":
             'data_hora': 'Data/Hora', 'produto': 'Produto', 'tipo_movimentacao': 'Operação',
             'quantidade': 'Qtd Movimentada', 'estoque_anterior': 'Estoque Antigo', 'estoque_novo': 'Estoque Novo', 'observacao': 'Detalhes'
         })
-        st.dataframe(df_mov_friendly.drop(columns=['id']), use_container_width=True)
+        st.dataframe(df_mov_friendly, use_container_width=True)
 
 # -----------------------------------------------------------------------------------------
-# TELA 4: PAINEL FINANCEIRO
+# TELA 4: PAINEL FINANCEIRO PRO (ATUALIZADA COM AS IDEIAS DO CHAT)
 # -----------------------------------------------------------------------------------------
 else:
-    st.title("📊 Painel Financeiro Realtime")
+    st.title("📊 Painel Financeiro & Dashboard Gerencial")
+    
+    # 1. Puxa dados do Estoque para calcular o Capital Empatado
+    try:
+        df_est_fin = conn.query("SELECT custo, quantidade, unidades_por_pacote, tipo_venda FROM estoque;", ttl="0s")
+    except:
+        df_est_fin = pd.DataFrame()
+        
+    valor_estoque_custo = 0.0
+    total_produtos_tipos = 0
+    if not df_est_fin.empty:
+        total_produtos_tipos = len(df_est_fin)
+        for _, row in df_est_fin.iterrows():
+            # Calcula o custo individual de cada unidade em estoque para saber o valor empatado real
+            u_pack = int(row['unidades_por_pacote'])
+            if row['tipo_venda'] == "Fardo/Fechado":
+                custo_unitario = float(row['custo']) / u_pack
+            else:
+                custo_unitario = float(row['custo'])
+            valor_estoque_custo += (custo_unitario * int(row['quantidade']))
+
+    # 2. Puxa dados de Vendas
     try:
         df_vendas = conn.query("SELECT * FROM vendas ORDER BY id DESC;", ttl="0s")
     except:
         df_vendas = pd.DataFrame()
         
     if df_vendas.empty:
-        st.info("Nenhuma venda realizada.")
+        st.info("Nenhuma venda realizada ainda para gerar estatísticas.")
+        if valor_estoque_custo > 0:
+            st.metric("📦 Capital Empatado em Estoque (Preço de Custo)", f"R$ {valor_estoque_custo:.2f}")
     else:
-        c1, c2 = st.columns(2)
+        # --- BLOCOS METRICAS PRINCIPAIS ---
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("💰 Faturamento Bruto", f"R$ {df_vendas['valor_total'].sum():.2f}")
         c2.metric("📈 Lucro Líquido Real", f"R$ {df_vendas['lucro'].sum():.2f}")
+        c3.metric("📦 Valor em Estoque (Custo)", f"R$ {valor_estoque_custo:.2f}")
+        c4.metric("🏷️ Tipos de Itens", f"{total_produtos_tipos} prods")
+        
+        st.divider()
+        
+        # --- SEÇÃO DE GRÁFICOS VISUAIS ---
+        st.subheader("📈 Desempenho de Vendas")
+        
+        # Prepara os dados agrupando por data (ano-mês-dia)
+        df_vendas['data_curta'] = df_vendas['data_hora'].str.slice(0, 10)
+        df_grafico = df_vendas.groupby('data_curta')[['valor_total', 'lucro']].sum().reset_index()
+        df_grafico = df_grafico.rename(columns={'data_curta': 'Data', 'valor_total': 'Faturamento (R$)', 'lucro': 'Lucro Real (R$)'})
+        
+        # Desenha o gráfico de barras nativo e limpo do Streamlit
+        st.bar_chart(df_grafico.set_index('Data'), use_container_width=True)
+        
+        st.divider()
+        
+        # --- HISTÓRICO COMPLETO ---
         st.markdown("### 📋 Histórico Geral de Vendas")
-        st.dataframe(df_vendas, use_container_width=True)
+        st.dataframe(df_vendas[['data_hora', 'produto', 'quantidade', 'valor_total', 'lucro', 'pagamento']].rename(columns={
+            'data_hora': 'Data/Hora', 'produto': 'Item', 'quantidade': 'Qtd Vendida', 'valor_total': 'Total (R$)', 'lucro': 'Lucro (R$)', 'pagamento': 'Pagamento'
+        }), use_container_width=True)
