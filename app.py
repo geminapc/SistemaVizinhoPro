@@ -1,175 +1,215 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import json
 
-st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout="centered")
+st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout="wide")
 
-# --- COMPONENTE PARA SALVAR NO NAVEGADOR (LOCAL STORAGE) ---
-# Injeta um código invisível que conversa com a memória do aparelho
-def injetar_javascript_armazenamento():
-    st.components.v1.html(
-        """
-        <script>
-        // Envia os dados guardados no navegador de volta para o Streamlit
-        const estoque = localStorage.getItem('db_estoque') || '[]';
-        const vendas = localStorage.getItem('db_vendas') || '[]';
-        
-        window.parent.postMessage({
-            type: 'LOCAL_STORAGE_DATA',
-            estoque: estoque,
-            vendas: vendas
-        }, '*');
+# --- CONEXÃO COM O POSTGRESQL (SUPABASE) ---
+try:
+    conn = st.connection("postgresql", type="sql")
+except Exception as e:
+    st.error(f"Erro ao inicializar conexão com o banco: {e}")
 
-        // Escuta o Streamlit pedindo para salvar dados novos
-        window.addEventListener('message', function(e) {
-            if (e.data.type === 'SAVE_ESTOQUE') {
-                localStorage.setItem('db_estoque', e.data.dados);
-            }
-            if (e.data.type === 'SAVE_VENDAS') {
-                localStorage.setItem('db_vendas', e.data.dados);
-            }
-        });
-        </script>
-        """,
-        height=0,
-    )
-
-injetar_javascript_armazenamento()
-
-# Captura os dados vindos do navegador e joga no sistema
-if "dados_carregados" not in st.session_state:
-    st.session_state.dados_carregados = False
-    st.session_state.db_estoque = []
-    st.session_state.db_vendas = []
-
-# Processa as mensagens do JavaScript de forma simples
-# (Garante estabilidade mesmo se o navegador demorar a responder)
-if not st.session_state.dados_carregados:
-    st.warning("🔄 Sincronizando dados com a memória do aparelho... Aguarde 1 segundo.")
-    # Valores padrão iniciais caso esteja abrindo pela primeira vez
-    st.session_state.dados_carregados = True
-
-def salvar_estoque_navegador():
-    texto_json = json.dumps(st.session_state.db_estoque)
-    st.components.v1.html(f"<script>window.parent.postMessage({{type: 'SAVE_ESTOQUE', dados: '{texto_json}'}}, '*');</script>", height=0)
-
-def salvar_vendas_navegador():
-    texto_json = json.dumps(st.session_state.db_vendas)
-    st.components.v1.html(f"<script>window.parent.postMessage({{type: 'SAVE_VENDAS', dados: '{texto_json}'}}, '*');</script>", height=0)
-
+# Inicializa o carrinho na sessão se não existir
+if "carrinho" not in st.session_state:
+    st.session_state.carrinho = []
 
 # --- DESIGN PERSONALIZADO (CSS) ---
 st.markdown("""
     <style>
-    .main { background-color: #f4f6f9; }
-    .stButton>button { 
-        width: 100%; border-radius: 12px; height: 3em; 
-        background-color: #2E7D32; color: white; font-weight: bold; border: none;
-    }
-    .stButton>button:hover { background-color: #1B5E20; color: white; }
-    div[data-testid="stMetricValue"] { font-size: 24px; font-weight: bold; color: #1E88E5; }
+    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; }
+    .total-card { background-color: #e8f5e9; padding: 20px; border-radius: 10px; border-left: 6px solid #2e7d32; text-align: center; }
     .card-financeiro { background-color: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 15px; }
-    .card-preco-venda { background-color: #E8F5E9; padding: 10px; border-radius: 8px; border-left: 5px solid #2E7D32; margin-top: 10px; margin-bottom: 15px; }
-    .card-troco { background-color: #FFF3E0; padding: 10px; border-radius: 8px; border-left: 5px solid #EF6C00; margin-top: 10px; margin-bottom: 15px; }
     </style>
     """, unsafe_allow_html=True)
 
-menu = st.selectbox("🎯 Escolha a Tela:", ["💰 Frente de Caixa", "📦 Estoque e Produtos", "📊 Painel do Caixa"])
-st.markdown("---")
-
-# TELA 1: FRENTE DE CAIXA
-if menu == "💰 Frente de Caixa":
-    st.markdown("### 🛒 Registrar Venda")
-    df_estoque = pd.DataFrame(st.session_state.db_estoque)
-    
-    if df_estoque.empty:
-        st.warning("Cadastre seus produtos na aba de Estoque primeiro!")
-    else:
-        produtos_disponiveis = df_estoque[df_estoque['quantidade'] > 0]['produto'].unique()
-        
-        if len(produtos_disponiveis) == 0:
-            st.error("🚨 Todos os produtos estão esgotados no estoque!")
-        else:
-            produto = st.selectbox("Selecione o Produto", produtos_disponiveis)
-            pagamento = st.selectbox("Forma de Pagamento", ["⚡ PIX", "💵 Dinheiro", "💳 Cartão"])
-            
-            detalhes = df_estoque[df_estoque['produto'] == produto].iloc[0]
-            unidades_pack = int(detalhes['unidades_por_pacote'])
-            estoque_atual_unidades = int(detalhes['quantidade'])
-            
-            estoque_visual = estoque_atual_unidades // unidades_pack if detalhes['tipo_venda'] == "Fardo/Fechado" else estoque_atual_unidades
-            texto_estoque = f"{estoque_visual} fardos" if detalhes['tipo_venda'] == "Fardo/Fechado" else f"{estoque_atual_unidades} unidades"
-            
-            c_preco, c_est = st.columns(2)
-            c_preco.metric("Preço de Venda", f"R$ {float(detalhes['preco_venda']):.2f}")
-            c_est.metric("Disponível", texto_estoque)
-            
-            qtd = st.number_input("Quantidade Vendida", min_value=1, max_value=int(estoque_visual) if estoque_visual > 0 else 1, step=1)
-            total = qtd * float(detalhes['preco_venda'])
-            
-            st.markdown(f"<h2>Total: :green[R$ {total:.2f}]</h2>", unsafe_allow_html=True)
-            
-            if pagamento == "💵 Dinheiro":
-                valor_pago = st.number_input("Valor entregue pelo cliente (R$)", min_value=float(total), step=1.0)
-                if valor_pago > total:
-                    st.markdown(f'<div class="card-troco"><h3 style="margin:0; color:#EF6C00;">Troco: R$ {valor_pago - total:.2f}</h3></div>', unsafe_allow_html=True)
-            
-            if st.button("Confirmar Recebimento"):
-                unidades_saidas = qtd * unidades_pack
-                custo_unitario_real = float(detalhes['custo']) / unidades_pack
-                lucro_total = total - (unidades_saidas * custo_unitario_real)
-                
-                st.session_state.db_vendas.append({
-                    "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"), "produto": produto,
-                    "quantidade": int(qtd), "valor_total": float(total), "lucro": float(lucro_total), "pagamento": pagamento
-                })
-                
-                for item in st.session_state.db_estoque:
-                    if item['produto'] == produto:
-                        item['quantidade'] -= unidades_saidas
-                
-                salvar_estoque_navegador()
-                salvar_vendas_navegador()
-                
-                st.balloons()
-                st.success("Venda realizada com sucesso!")
-                st.rerun()
-
-# TELA 2: ESTOQUE E PRODUTOS
-elif menu == "📦 Estoque e Produtos":
-    st.markdown("### 📦 Gerenciar Produtos e Preços")
-    nome = st.text_input("Nome do Item").strip()
-    tipo = st.selectbox("Modelo de Venda", ["Unidade Avulsa", "Fardo/Fechado"])
-    pack = st.number_input("Unidades por pacote", min_value=1, value=10 if tipo == "Fardo/Fechado" else 1)
-    custo = st.number_input("Preço de Custo (R$)", min_value=0.0, value=0.0)
-    margem = st.number_input("Margem de Lucro (%)", min_value=0.0, value=50.0)
-    qtd_comprada = st.number_input("Quantidade para o estoque", min_value=0, value=0)
-    
-    preco_venda_sugerido = custo * (1 + (margem / 100))
-    st.markdown(f'<div class="card-preco-venda"><h3 style="margin:0; color:#2E7D32;">Preço Final: R$ {preco_venda_sugerido:.2f}</h3></div>', unsafe_allow_html=True)
-    
-    if st.button("Gravar no Estoque"):
-        if nome:
-            st.session_state.db_estoque.append({
-                "produto": nome, "custo": custo, "margem": margem, "preco_venda": preco_venda_sugerido,
-                "quantidade": int(qtd_comprada * pack), "unidades_por_pacote": pack, "tipo_venda": tipo
-            })
-            salvar_estoque_navegador()
-            st.success(f"'{nome}' adicionado!")
-            st.rerun()
-
+# --- MENU LATERAL INTERATIVO ---
+with st.sidebar:
+    st.markdown("## 🏪 **Menu Principal**")
+    tela = st.radio("Ir para:", ["💰 Frente de Caixa (Balcão)", "📦 Controle de Estoque", "📊 Painel Financeiro"])
     st.markdown("---")
-    if st.session_state.db_estoque:
-        st.dataframe(pd.DataFrame(st.session_state.db_estoque)[['produto', 'preco_venda', 'quantidade', 'tipo_venda']], use_container_width=True)
+    st.caption("Conectado ao Supabase PostgreSQL")
 
-# TELA 3: PAINEL FINANCEIRO
-else:
-    st.markdown("### 📊 Fechamento de Caixa")
-    if not st.session_state.db_vendas:
-        st.info("Nenhuma venda realizada ainda.")
+# -----------------------------------------------------------------------------------------
+# TELA 1: FRENTE DE CAIXA (CARRINHO MULTI-ITENS)
+# -----------------------------------------------------------------------------------------
+if tela == "💰 Frente de Caixa (Balcão)":
+    st.title("🛒 Frente de Caixa")
+    
+    # Busca estoque atualizado do banco
+    try:
+        df_est = conn.query("SELECT * FROM estoque ORDER BY produto;", ttl="0s")
+    except:
+        df_est = pd.DataFrame()
+        
+    if df_est.empty:
+        st.warning("Estoque zerado ou tabela não encontrada! Cadastre produtos na aba de Estoque.")
     else:
-        df_vendas = pd.DataFrame(st.session_state.db_vendas)
-        st.markdown(f'<div class="card-financeiro">💰 Faturamento Bruto: <h2>R$ {df_vendas["valor_total"].sum():.2f}</h2></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-financeiro">📈 Lucro Líquido Real: <h2>R$ {df_vendas["lucro"].sum():.2f}</h2></div>', unsafe_allow_html=True)
+        col_venda, col_carrinho = st.columns([1.2, 1])
+        
+        with col_venda:
+            st.markdown("### 1. Adicionar Produto")
+            produtos_disponiveis = df_est[df_est['quantidade'] > 0]['produto'].tolist()
+            
+            if not produtos_disponiveis:
+                st.error("🚨 Todos os produtos estão esgotados no estoque!")
+            else:
+                prod_selecionado = st.selectbox("Selecione o Produto", produtos_disponiveis)
+                detalhes = df_est[df_est['produto'] == prod_selecionado].iloc[0]
+                
+                unidades_pack = int(detalhes['unidades_por_pacote'])
+                qtd_maxima = int(detalhes['quantidade'] // unidades_pack) if detalhes['tipo_venda'] == "Fardo/Fechado" else int(detalhes['quantidade'])
+                
+                c1, c2 = st.columns(2)
+                c1.metric("Preço Unitário", f"R$ {float(detalhes['preco_venda']):.2f}")
+                c2.metric("Disponível", f"{qtd_maxima} fardos" if detalhes['tipo_venda'] == "Fardo/Fechado" else f"{qtd_maxima} un")
+                
+                qtd_venda = st.number_input("Quantidade desejada", min_value=1, max_value=max(1, qtd_maxima), value=1, step=1)
+                
+                if st.button("➕ Adicionar ao Pedido"):
+                    # Verifica se o produto já está no carrinho para consolidar
+                    ja_no_carrinho = False
+                    for item in st.session_state.carrinho:
+                        if item['produto'] == prod_selecionado:
+                            if item['quantidade'] + qtd_venda <= qtd_maxima:
+                                item['quantidade'] += qtd_venda
+                                item['subtotal'] = item['quantidade'] * float(detalhes['preco_venda'])
+                                ja_no_carrinho = True
+                            else:
+                                st.error("Quantidade total excede o estoque disponível!")
+                                ja_no_carrinho = True
+                    
+                    if not ja_no_carrinho:
+                        st.session_state.carrinho.append({
+                            "produto": prod_selecionado,
+                            "quantidade": qtd_venda,
+                            "preco_venda": float(detalhes['preco_venda']),
+                            "custo_total": float(detalhes['custo']) * qtd_venda,
+                            "unidades_totais": qtd_venda * unidades_pack,
+                            "subtotal": qtd_venda * float(detalhes['preco_venda'])
+                        })
+                    st.rerun()
+
+        with col_carrinho:
+            st.markdown("### 📋 Carrinho de Compras")
+            if not st.session_state.carrinho:
+                st.info("O carrinho está vazio. Adicione itens.")
+            else:
+                df_cart = pd.DataFrame(st.session_state.carrinho)
+                st.dataframe(df_cart[['produto', 'quantidade', 'subtotal']].rename(columns={
+                    'produto': 'Item', 'quantidade': 'Qtd', 'subtotal': 'Subtotal (R$)'
+                }), use_container_width=True)
+                
+                total_geral = df_cart['subtotal'].sum()
+                
+                st.markdown(f"""
+                    <div class="total-card">
+                        <p style="margin:0; font-size: 15px; color: #1b5e20;">TOTAL DO PEDIDO</p>
+                        <h2 style="margin:0; font-size: 32px; color: #2e7d32;">R$ {total_geral:.2f}</h2>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                forma_pagamento = st.selectbox("Forma de Pagamento", ["⚡ PIX", "💵 Dinheiro", "💳 Cartão"])
+                
+                if forma_pagamento == "💵 Dinheiro":
+                    pago = st.number_input("Valor Entregue", min_value=float(total_geral), value=float(total_geral))
+                    if pago > total_geral:
+                        st.success(f"💵 Troco: **R$ {pago - total_geral:.2f}**")
+                
+                c_btn1, c_btn2 = st.columns(2)
+                if c_btn1.button("❌ Limpar Carrinho"):
+                    st.session_state.carrinho = []
+                    st.rerun()
+                    
+                if c_btn2.button("✅ Confirmar Venda"):
+                    try:
+                        with conn.session as session:
+                            for item in st.session_state.carrinho:
+                                # Abater do banco de dados estoque
+                                session.execute(
+                                    "UPDATE estoque SET quantidade = quantidade - :unidades WHERE produto = :prod;",
+                                    {"unidades": item['unidades_totais'], "prod": item['produto']}
+                                )
+                                # Calcular lucro individual do lote
+                                lucro_item = item['subtotal'] - item['custo_total']
+                                # Registrar a venda no banco
+                                session.execute(
+                                    "INSERT INTO vendas (data_hora, produto, quantidade, valor_total, lucro, pagamento) VALUES (:dt, :prod, :qtd, :val, :luc, :pag);",
+                                    {
+                                        "dt": datetime.now().strftime("%d/%m/%Y %H:%M"), "prod": item['produto'],
+                                        "qtd": item['quantidade'], "val": item['subtotal'], "luc": lucro_item, "pag": forma_pagamento
+                                    }
+                                )
+                            session.commit()
+                        st.session_state.carrinho = []
+                        st.balloons()
+                        st.success("Venda registrada e estoque atualizado no Supabase!")
+                        st.rerun()
+                    except Exception as err:
+                        st.error(f"Falha ao salvar no banco: {err}")
+
+# -----------------------------------------------------------------------------------------
+# TELA 2: CONTROLE DE ESTOQUE
+# -----------------------------------------------------------------------------------------
+elif tela == "📦 Controle de Estoque":
+    st.title("📦 Controle de Estoque")
+    
+    try:
+        df_estoque = conn.query("SELECT * FROM estoque ORDER BY produto;", ttl="0s")
+    except:
+        df_estoque = pd.DataFrame()
+        
+    if not df_estoque.empty:
+        st.dataframe(df_estoque[['produto', 'preco_venda', 'quantidade', 'tipo_venda']].rename(columns={
+            'produto': 'Produto', 'preco_venda': 'Preço de Venda', 'quantidade': 'Unidades em Estoque', 'tipo_venda': 'Modelo Venda'
+        }), use_container_width=True)
+    
+    st.markdown("### ➕ Adicionar / Atualizar Item")
+    with st.form("cadastro_prod"):
+        nome = st.text_input("Nome exato do item").strip()
+        tipo = st.selectbox("Modelo", ["Unidade Avulsa", "Fardo/Fechado"])
+        pack = st.number_input("Unidades por fardo (Para avulso deixe 1)", min_value=1, value=1)
+        custo = st.number_input("Preço de Custo Total (R$)", min_value=0.0)
+        margem = st.number_input("Margem (%)", min_value=0.0, value=50.0)
+        qtd = st.number_input("Quantidade de fardos/unidades compradas", min_value=0, value=0)
+        
+        btn_salvar = st.form_submit_button("💾 Gravar no Banco de Dados")
+        
+        if btn_salvar and nome:
+            preco_final = custo * (1 + (margem / 100))
+            unidades_totais = int(qtd * pack)
+            
+            try:
+                with conn.session as session:
+                    session.execute("""
+                        INSERT INTO estoque (produto, custo, preco_venda, quantidade, unidades_por_pacote, tipo_venda)
+                        VALUES (:prod, :cust, :prec, :qtd, :pack, :tipo)
+                        ON CONFLICT (produto) 
+                        DO UPDATE SET custo = :cust, preco_venda = :prec, quantidade = estoque.quantidade + :qtd, unidades_por_pacote = :pack, tipo_venda = :tipo;
+                    """, {"prod": nome, "cust": custo, "prec": preco_final, "qtd": unidades_totais, "pack": pack, "tipo": tipo})
+                    session.commit()
+                st.success(f"'{nome}' atualizado no Supabase!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar no banco: {e}")
+
+# -----------------------------------------------------------------------------------------
+# TELA 3: PAINEL FINANCEIRO
+# -----------------------------------------------------------------------------------------
+else:
+    st.title("📊 Painel Financeiro Realtime")
+    
+    try:
+        df_vendas = conn.query("SELECT * FROM vendas ORDER BY id DESC;", ttl="0s")
+    except:
+        df_vendas = pd.DataFrame()
+        
+    if df_vendas.empty:
+        st.info("Nenhuma venda realizada.")
+    else:
+        c1, c2 = st.columns(2)
+        c1.metric("💰 Faturamento Bruto", f"R$ {df_vendas['valor_total'].sum():.2f}")
+        c2.metric("📈 Lucro Líquido Real", f"R$ {df_vendas['lucro'].sum():.2f}")
+        
+        st.markdown("### 📋 Histórico Geral de Vendas")
         st.dataframe(df_vendas, use_container_width=True)
