@@ -138,15 +138,16 @@ if tela == "💰 Frente de Caixa (Balcão)":
                         # Ajuste Cursor: Uso seguro de conexões ativas com tratamento de erro
                         with conn.session as session:
                             for item in st.session_state.carrinho:
+                               from sqlalchemy import text
                                 session.execute(
-                                    "UPDATE estoque SET quantidade = quantidade - :unidades WHERE produto = :prod;",
+                                    text("UPDATE estoque SET quantidade = quantidade - :unidades WHERE produto = :prod;"),
                                     {"unidades": item['unidades_totais'], "prod": item['produto']}
                                 )
                                 lucro_item = item['subtotal'] - item['custo_total']
                                 session.execute(
-                                    "INSERT INTO vendas (data_hora, produto, quantidade, valor_total, lucro, pagamento) VALUES (:dt, :prod, :qtd, :val, :luc, :pag);",
+                                    text("INSERT INTO vendas (data_hora, produto, quantidade, valor_total, lucro, pagamento) VALUES (:dt, :prod, :qtd, :val, :luc, :pag);"),
                                     {
-                                        "dt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), # Ajuste Cursor: Timestamp padronizado
+                                        "dt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                         "prod": item['produto'], "qtd": item['quantidade'], 
                                         "val": item['subtotal'], "luc": lucro_item, "pag": forma_pagamento
                                     }
@@ -192,12 +193,14 @@ elif tela == "📦 Controle de Estoque":
             
             try:
                 with conn.session as session:
-                    session.execute("""
+from sqlalchemy import text
+                    query_salvar = text("""
                         INSERT INTO estoque (produto, custo, preco_venda, quantidade, unidades_por_pacote, tipo_venda)
                         VALUES (:prod, :cust, :prec, :qtd, :pack, :tipo)
                         ON CONFLICT (produto) 
                         DO UPDATE SET custo = :cust, preco_venda = :prec, quantidade = estoque.quantidade + :qtd, unidades_por_pacote = :pack, tipo_venda = :tipo;
-                    """, {"prod": nome, "cust": custo, "prec": preco_final, "qtd": unidades_totais, "pack": pack, "tipo": tipo})
+                    """)
+                    session.execute(query_salvar, {"prod": nome, "cust": custo, "prec": preco_final, "qtd": unidades_totais, "pack": pack, "tipo": tipo})
                     session.commit()
                 st.success(f"'{nome}' atualizado no Supabase!")
                 st.rerun()
