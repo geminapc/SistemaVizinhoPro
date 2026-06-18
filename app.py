@@ -9,6 +9,21 @@ st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout=
 # --- CONEXÃO COM O POSTGRESQL (SUPABASE) ---
 try:
     conn = st.connection("postgresql", type="sql")
+    
+    # 🛡️ GARANTIA: Cria a tabela de clientes direto pelo código se ela não existir
+    with conn.session as session:
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS clientes (
+                id SERIAL PRIMARY KEY,
+                nome VARCHAR(255) NOT NULL,
+                whatsapp VARCHAR(20) NOT NULL,
+                endereco TEXT,
+                bairro VARCHAR(100),
+                observacoes TEXT,
+                data_cadastro TIMESTAMP DEFAULT NOW()
+            );
+        """))
+        session.commit()
 except Exception as e:
     st.error(f"Erro ao inicializar conexão com o banco: {e}")
 
@@ -136,7 +151,6 @@ if tela == "💰 Frente de Caixa (Balcão)":
             if not st.session_state.carrinho:
                 st.info("O carrinho está vazio.")
                 
-                # 💬 BOTÃO DO WHATSAPP APÓS A VENDA FINALIZADA
                 if st.session_state.ultima_venda:
                     st.success("✨ Venda anterior registrada com sucesso!")
                     uv = st.session_state.ultima_venda
@@ -160,7 +174,6 @@ if tela == "💰 Frente de Caixa (Balcão)":
                     <div class="total-card"><p style="margin:0;">TOTAL DO PEDIDO</p><h2 style="margin:0;color:#2e7d32;">R$ {total_geral:.2f}</h2></div>
                     """, unsafe_allow_html=True)
                 
-                # Seleção de cliente opcional vinculada ao WhatsApp
                 cliente_id = None
                 telefones_dict = {}
                 if not df_cli_venda.empty:
@@ -205,11 +218,10 @@ if tela == "💰 Frente de Caixa (Balcão)":
                                     text("INSERT INTO vendas (data_hora, produto, quantidade, valor_total, lucro, pagamento) VALUES (:dt, :prod, :qtd, :val, :luc, :pag);"),
                                     {"dt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "prod": item['produto'], "qtd": item['quantidade'], "val": item['subtotal'], "luc": lucro_item, "pag": forma_pagamento}
                                 )
-                                registrar_movimentacao(session, item['produto'], "VENDA", item['unidades_totais'], estoque_atual,定位=novo_estoque, obs=f"Venda no balcão via {forma_pagamento}")
+                                registrar_movimentacao(session, item['produto'], "VENDA", item['unidades_totais'], estoque_atual, novo_estoque, f"Venda no balcão via {forma_pagamento}")
                             
                             session.commit()
                         
-                        # Salva na sessão os dados para habilitar o botão do WhatsApp
                         if num_telefone:
                             st.session_state.ultima_venda = {"total": total_geral, "telefone": num_telefone, "pagamento": forma_pagamento}
                         else:
@@ -222,7 +234,7 @@ if tela == "💰 Frente de Caixa (Balcão)":
                         st.error(f"Falha ao salvar no banco: {err}")
 
 # -----------------------------------------------------------------------------------------
-# TELA 2: CADASTRO DE CLIENTES (NOVA TELA)
+# TELA 2: CADASTRO DE CLIENTES
 # -----------------------------------------------------------------------------------------
 elif tela == "👥 Cadastro de Clientes":
     st.title("👥 Gestão e Cadastro de Clientes")
