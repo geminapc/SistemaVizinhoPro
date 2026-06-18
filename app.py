@@ -239,7 +239,7 @@ elif tela == "📦 Controle de Estoque":
 
                     session.execute(
                         text("""
-                        INSERT INTO estoque (produto, custo, preco_venda, quantity, unidades_por_pacote, tipo_venda)
+                        INSERT INTO estoque (produto, custo, preco_venda, quantidade, unidades_por_pacote, tipo_venda)
                         VALUES (:produto, :custo, :preco, :qtd, :pack, :tipo)
                         ON CONFLICT (produto)
                         DO UPDATE SET custo = :custo, preco_venda = :preco, quantidade = estoque.quantidade + :qtd, unidades_por_pacote = :pack, tipo_venda = :tipo;
