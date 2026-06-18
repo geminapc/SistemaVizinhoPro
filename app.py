@@ -49,7 +49,7 @@ with st.sidebar:
     st.caption("Conectado ao Supabase PostgreSQL")
 
 # -----------------------------------------------------------------------------------------
-# TELA 1: FRENTE DE CAIXA
+# TELA 1: FRENTE DE CAIXA (ATUALIZADA)
 # -----------------------------------------------------------------------------------------
 if tela == "💰 Frente de Caixa (Balcão)":
     st.title("🛒 Frente de Caixa")
@@ -72,50 +72,63 @@ if tela == "💰 Frente de Caixa (Balcão)":
             if not produtos_disponiveis:
                 st.error("🚨 Todos os produtos estão esgotados!")
             else:
-                prod_selecionado = st.selectbox("Selecione o Produto", produtos_disponiveis)
-                detalhes = df_est[df_est['produto'] == prod_selecionado].iloc[0]
+                # 🔍 IMPLEMENTAÇÃO DA BUSCA RÁPIDA (DIGITÁVEL)
+                prod_selecionado = st.selectbox(
+                    "Selecione o Produto",
+                    options=produtos_disponiveis,
+                    index=None,
+                    placeholder="🔍 Digite o nome do produto para buscar..."
+                )
                 
-                unidades_pack = int(detalhes['unidades_por_pacote'])
-                qtd_maxima = int(detalhes['quantidade'] // unidades_pack) if detalhes['tipo_venda'] == "Fardo/Fechado" else int(detalhes['quantidade'])
-                
-                c1, c2 = st.columns(2)
-                c1.metric("Preço Unitário", f"R$ {float(detalhes['preco_venda']):.2f}")
-                c2.metric("Disponível", f"{qtd_maxima} fardos" if detalhes['tipo_venda'] == "Fardo/Fechado" else f"{qtd_maxima} un")
-                
-                qtd_venda = st.number_input("Quantidade desejada", min_value=1, max_value=max(1, qtd_maxima), value=1, step=1)
-                
-                if st.button("➕ Adicionar ao Pedido"):
-                    ja_no_carrinho = False
-                    for item in st.session_state.carrinho:
-                        if item['produto'] == prod_selecionado:
-                            if item['quantidade'] + qtd_venda <= qtd_maxima:
-                                item['quantidade'] += qtd_venda
-                                item['subtotal'] = item['quantidade'] * float(detalhes['preco_venda'])
-                                item['unidades_totais'] = item['quantidade'] * unidades_pack
-                                if detalhes['tipo_venda'] == "Fardo/Fechado":
-                                    item['custo_total'] = float(detalhes['custo']) * item['quantidade']
-                                else:
-                                    item['custo_total'] = (float(detalhes['custo']) / unidades_pack) * item['unidades_totais']
-                                ja_no_carrinho = True
-                            else:
-                                st.error("Quantidade total excede o estoque disponível!")
-                                ja_no_carrinho = True
+                # Só exibe os detalhes e campos de quantidade após selecionar um produto
+                if prod_selecionado:
+                    detalhes = df_est[df_est['produto'] == prod_selecionado].iloc[0]
                     
-                    if not ja_no_carrinho:
-                        if detalhes['tipo_venda'] == "Fardo/Fechado":
-                            custo_calculado = float(detalhes['custo']) * qtd_venda
-                        else:
-                            custo_calculado = (float(detalhes['custo']) / unidades_pack) * (qtd_venda * unidades_pack)
+                    unidades_pack = int(detalhes['unidades_por_pacote'])
+                    qtd_maxima = int(detalhes['quantidade'] // unidades_pack) if detalhes['tipo_venda'] == "Fardo/Fechado" else int(detalhes['quantidade'])
+                    
+                    # 📊 EXIBIÇÃO DE INFORMAÇÕES RÁPIDAS ANTES DA VENDA
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Preço", f"R$ {float(detalhes['preco_venda']):.2f}")
+                    c2.metric("Estoque Atual", f"{qtd_maxima} fardos" if detalhes['tipo_venda'] == "Fardo/Fechado" else f"{qtd_maxima} un")
+                    c3.metric("Tipo de Venda", str(detalhes['tipo_venda']))
+                    
+                    st.markdown("---")
+                    
+                    qtd_venda = st.number_input("Quantidade desejada", min_value=1, max_value=max(1, qtd_maxima), value=1, step=1)
+                    
+                    if st.button("➕ Adicionar ao Pedido"):
+                        ja_no_carrinho = False
+                        for item in st.session_state.carrinho:
+                            if item['produto'] == prod_selecionado:
+                                if item['quantidade'] + qtd_venda <= qtd_maxima:
+                                    item['quantidade'] += qtd_venda
+                                    item['subtotal'] = item['quantidade'] * float(detalhes['preco_venda'])
+                                    item['unidades_totais'] = item['quantidade'] * unidades_pack
+                                    if detalhes['tipo_venda'] == "Fardo/Fechado":
+                                        item['custo_total'] = float(detalhes['custo']) * item['quantidade']
+                                    else:
+                                        item['custo_total'] = (float(detalhes['custo']) / unidades_pack) * item['unidades_totais']
+                                    ja_no_carrinho = True
+                                else:
+                                    st.error("Quantidade total excede o estoque disponível!")
+                                    ja_no_carrinho = True
+                        
+                        if not ja_no_carrinho:
+                            if detalhes['tipo_venda'] == "Fardo/Fechado":
+                                custo_calculado = float(detalhes['custo']) * qtd_venda
+                            else:
+                                custo_calculado = (float(detalhes['custo']) / unidades_pack) * (qtd_venda * unidades_pack)
 
-                        st.session_state.carrinho.append({
-                            "produto": prod_selecionado,
-                            "quantidade": qtd_venda,
-                            "preco_venda": float(detalhes['preco_venda']),
-                            "custo_total": custo_calculado,
-                            "unidades_totais": qtd_venda * unidades_pack,
-                            "subtotal": qtd_venda * float(detalhes['preco_venda'])
-                        })
-                    st.rerun()
+                            st.session_state.carrinho.append({
+                                "produto": prod_selecionado,
+                                "quantidade": qtd_venda,
+                                "preco_venda": float(detalhes['preco_venda']),
+                                "custo_total": custo_calculado,
+                                "unidades_totais": qtd_venda * unidades_pack,
+                                "subtotal": qtd_venda * float(detalhes['preco_venda'])
+                            })
+                        st.rerun()
 
         with col_carrinho:
             st.markdown("### 📋 Carrinho de Compras")
@@ -226,7 +239,7 @@ elif tela == "📦 Controle de Estoque":
 
                     session.execute(
                         text("""
-                        INSERT INTO estoque (produto, custo, preco_venda, quantidade, unidades_por_pacote, tipo_venda)
+                        INSERT INTO estoque (produto, custo, preco_venda, quantity, unidades_por_pacote, tipo_venda)
                         VALUES (:produto, :custo, :preco, :qtd, :pack, :tipo)
                         ON CONFLICT (produto)
                         DO UPDATE SET custo = :custo, preco_venda = :preco, quantidade = estoque.quantidade + :qtd, unidades_por_pacote = :pack, tipo_venda = :tipo;
@@ -257,7 +270,7 @@ elif tela == "📦 Controle de Estoque":
                     )
                     registrar_movimentacao(session, produto_ajuste, "AJUSTE", (nova_qtd - qtd_atual), qtd_atual, nova_qtd, "Ajuste manual de inventário")
                     session.commit()
-                st.success("Estoque atualizado!")
+                st.success("Estoque updated!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro: {e}")
@@ -302,12 +315,11 @@ elif tela == "📋 Extrato do Estoque":
         st.dataframe(df_mov_friendly, use_container_width=True)
 
 # -----------------------------------------------------------------------------------------
-# TELA 4: PAINEL FINANCEIRO PRO (ATUALIZADA COM AS IDEIAS DO CHAT)
+# TELA 4: PAINEL FINANCEIRO PRO
 # -----------------------------------------------------------------------------------------
 else:
     st.title("📊 Painel Financeiro & Dashboard Gerencial")
     
-    # 1. Puxa dados do Estoque para calcular o Capital Empatado
     try:
         df_est_fin = conn.query("SELECT custo, quantidade, unidades_por_pacote, tipo_venda FROM estoque;", ttl="0s")
     except:
@@ -318,7 +330,6 @@ else:
     if not df_est_fin.empty:
         total_produtos_tipos = len(df_est_fin)
         for _, row in df_est_fin.iterrows():
-            # Calcula o custo individual de cada unidade em estoque para saber o valor empatado real
             u_pack = int(row['unidades_por_pacote'])
             if row['tipo_venda'] == "Fardo/Fechado":
                 custo_unitario = float(row['custo']) / u_pack
@@ -326,7 +337,6 @@ else:
                 custo_unitario = float(row['custo'])
             valor_estoque_custo += (custo_unitario * int(row['quantidade']))
 
-    # 2. Puxa dados de Vendas
     try:
         df_vendas = conn.query("SELECT * FROM vendas ORDER BY id DESC;", ttl="0s")
     except:
@@ -337,7 +347,6 @@ else:
         if valor_estoque_custo > 0:
             st.metric("📦 Capital Empatado em Estoque (Preço de Custo)", f"R$ {valor_estoque_custo:.2f}")
     else:
-        # --- BLOCOS METRICAS PRINCIPAIS ---
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("💰 Faturamento Bruto", f"R$ {df_vendas['valor_total'].sum():.2f}")
         c2.metric("📈 Lucro Líquido Real", f"R$ {df_vendas['lucro'].sum():.2f}")
@@ -346,21 +355,17 @@ else:
         
         st.divider()
         
-        # --- SEÇÃO DE GRÁFICOS VISUAIS ---
         st.subheader("📈 Desempenho de Vendas")
         
-        # Prepara os dados agrupando por data (ano-mês-dia)
         df_vendas['data_curta'] = df_vendas['data_hora'].str.slice(0, 10)
         df_grafico = df_vendas.groupby('data_curta')[['valor_total', 'lucro']].sum().reset_index()
         df_grafico = df_grafico.rename(columns={'data_curta': 'Data', 'valor_total': 'Faturamento (R$)', 'lucro': 'Lucro Real (R$)'})
         
-        # Desenha o gráfico de barras nativo e limpo do Streamlit
         st.bar_chart(df_grafico.set_index('Data'), use_container_width=True)
         
         st.divider()
         
-        # --- HISTÓRICO COMPLETO ---
         st.markdown("### 📋 Histórico Geral de Vendas")
         st.dataframe(df_vendas[['data_hora', 'produto', 'quantidade', 'valor_total', 'lucro', 'pagamento']].rename(columns={
-            'data_hora': 'Data/Hora', 'produto': 'Item', 'quantidade': 'Qtd Vendida', 'valor_total': 'Total (R$)', 'lucro': 'Lucro (R$)', 'pagamento': 'Pagamento'
+            'data_hora': 'Data/Hora', 'item': 'produto', 'quantidade': 'Qtd Vendida', 'valor_total': 'Total (R$)', 'lucro': 'Lucro (R$)', 'pagamento': 'Pagamento'
         }), use_container_width=True)
