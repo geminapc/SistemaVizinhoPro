@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from sqlalchemy import text
+import urllib.parse
 
 st.set_page_config(page_title="Gestão Comercial Pro", page_icon="🏪", layout="wide")
 
@@ -11,9 +12,11 @@ try:
 except Exception as e:
     st.error(f"Erro ao inicializar conexão com o banco: {e}")
 
-# Inicializa o carrinho na sessão se não existir
+# Inicializa o carrinho e controle de mensagens na sessão se não existirem
 if "carrinho" not in st.session_state:
     st.session_state.carrinho = []
+if "ultima_venda" not in st.session_state:
+    st.session_state.ultima_venda = None
 
 # --- DESIGN PERSONALIZADO (CSS) ---
 st.markdown("""
@@ -41,6 +44,7 @@ with st.sidebar:
     st.markdown("## 🏪 **Menu Principal**")
     tela = st.radio("Ir para:", [
         "💰 Frente de Caixa (Balcão)", 
+        "👥 Cadastro de Clientes",
         "📦 Controle de Estoque", 
         "📋 Extrato do Estoque",
         "📊 Painel Financeiro"
@@ -49,16 +53,18 @@ with st.sidebar:
     st.caption("Conectado ao Supabase PostgreSQL")
 
 # -----------------------------------------------------------------------------------------
-# TELA 1: FRENTE DE CAIXA (ATUALIZADA)
+# TELA 1: FRENTE DE CAIXA
 # -----------------------------------------------------------------------------------------
 if tela == "💰 Frente de Caixa (Balcão)":
     st.title("🛒 Frente de Caixa")
     
     try:
         df_est = conn.query("SELECT * FROM estoque ORDER BY produto;", ttl="0s")
+        df_cli_venda = conn.query("SELECT id, nome, whatsapp FROM clientes ORDER BY nome;", ttl="0s")
     except Exception as e:
         st.error(f"Não foi possível ler o banco de dados: {e}")
         df_est = pd.DataFrame()
+        df_cli_venda = pd.DataFrame()
         
     if df_est.empty:
         st.warning("Estoque zerado! Cadastre produtos na aba de Estoque.")
@@ -72,7 +78,6 @@ if tela == "💰 Frente de Caixa (Balcão)":
             if not produtos_disponiveis:
                 st.error("🚨 Todos os produtos estão esgotados!")
             else:
-                # 🔍 IMPLEMENTAÇÃO DA BUSCA RÁPIDA (DIGITÁVEL)
                 prod_selecionado = st.selectbox(
                     "Selecione o Produto",
                     options=produtos_disponiveis,
@@ -80,21 +85,17 @@ if tela == "💰 Frente de Caixa (Balcão)":
                     placeholder="🔍 Digite o nome do produto para buscar..."
                 )
                 
-                # Só exibe os detalhes e campos de quantidade após selecionar um produto
                 if prod_selecionado:
                     detalhes = df_est[df_est['produto'] == prod_selecionado].iloc[0]
-                    
                     unidades_pack = int(detalhes['unidades_por_pacote'])
                     qtd_maxima = int(detalhes['quantidade'] // unidades_pack) if detalhes['tipo_venda'] == "Fardo/Fechado" else int(detalhes['quantidade'])
                     
-                    # 📊 EXIBIÇÃO DE INFORMAÇÕES RÁPIDAS ANTES DA VENDA
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Preço", f"R$ {float(detalhes['preco_venda']):.2f}")
                     c2.metric("Estoque Atual", f"{qtd_maxima} fardos" if detalhes['tipo_venda'] == "Fardo/Fechado" else f"{qtd_maxima} un")
                     c3.metric("Tipo de Venda", str(detalhes['tipo_venda']))
                     
                     st.markdown("---")
-                    
                     qtd_venda = st.number_input("Quantidade desejada", min_value=1, max_value=max(1, qtd_maxima), value=1, step=1)
                     
                     if st.button("➕ Adicionar ao Pedido"):
@@ -134,6 +135,19 @@ if tela == "💰 Frente de Caixa (Balcão)":
             st.markdown("### 📋 Carrinho de Compras")
             if not st.session_state.carrinho:
                 st.info("O carrinho está vazio.")
+                
+                # 💬 BOTÃO DO WHATSAPP APÓS A VENDA FINALIZADA
+                if st.session_state.ultima_venda:
+                    st.success("✨ Venda anterior registrada com sucesso!")
+                    uv = st.session_state.ultima_venda
+                    msg = f"Olá! Seu pedido na loja ficou pronto.\n*Total:* R$ {uv['total']:.2f}\nForma de Pagamento: {uv['pagamento']}\nObrigado pela preferência!"
+                    msg_encodada = urllib.parse.quote(msg)
+                    link_wa = f"https://wa.me/{uv['telefone']}?text={msg_encodada}"
+                    
+                    st.link_button("💬 Enviar Comprovante no WhatsApp", link_wa, type="primary")
+                    if st.button("Limpar Alerta de WhatsApp"):
+                        st.session_state.ultima_venda = None
+                        st.rerun()
             else:
                 df_cart = pd.DataFrame(st.session_state.carrinho)
                 st.dataframe(df_cart[['produto', 'quantidade', 'subtotal']].rename(columns={
@@ -145,6 +159,22 @@ if tela == "💰 Frente de Caixa (Balcão)":
                 st.markdown(f"""
                     <div class="total-card"><p style="margin:0;">TOTAL DO PEDIDO</p><h2 style="margin:0;color:#2e7d32;">R$ {total_geral:.2f}</h2></div>
                     """, unsafe_allow_html=True)
+                
+                # Seleção de cliente opcional vinculada ao WhatsApp
+                cliente_id = None
+                telefones_dict = {}
+                if not df_cli_venda.empty:
+                    opcoes_cliente = ["Consumidor Não Identificado"]
+                    for _, r_cli in df_cli_venda.iterrows():
+                        nome_exibir = f"{r_cli['nome']} ({r_cli['whatsapp']})"
+                        opcoes_cliente.append(nome_exibir)
+                        telefones_dict[nome_exibir] = ''.join(filter(str.isdigit, str(r_cli['whatsapp'])))
+                    
+                    cli_selecionado = st.selectbox("Vincular Cliente (Opcional)", opcoes_cliente)
+                    num_telefone = telefones_dict.get(cli_selecionado, "")
+                else:
+                    st.caption("Nenhum cliente cadastrado para vincular.")
+                    num_telefone = ""
                 
                 forma_pagamento = st.selectbox("Forma de Pagamento", ["⚡ PIX", "💵 Dinheiro", "💳 Cartão"])
                 
@@ -175,18 +205,80 @@ if tela == "💰 Frente de Caixa (Balcão)":
                                     text("INSERT INTO vendas (data_hora, produto, quantidade, valor_total, lucro, pagamento) VALUES (:dt, :prod, :qtd, :val, :luc, :pag);"),
                                     {"dt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "prod": item['produto'], "qtd": item['quantidade'], "val": item['subtotal'], "luc": lucro_item, "pag": forma_pagamento}
                                 )
-                                registrar_movimentacao(session, item['produto'], "VENDA", item['unidades_totais'], estoque_atual, novo_estoque, f"Venda no balcão via {forma_pagamento}")
+                                registrar_movimentacao(session, item['produto'], "VENDA", item['unidades_totais'], estoque_atual,定位=novo_estoque, obs=f"Venda no balcão via {forma_pagamento}")
                             
                             session.commit()
+                        
+                        # Salva na sessão os dados para habilitar o botão do WhatsApp
+                        if num_telefone:
+                            st.session_state.ultima_venda = {"total": total_geral, "telefone": num_telefone, "pagamento": forma_pagamento}
+                        else:
+                            st.session_state.ultima_venda = None
+                            
                         st.session_state.carrinho = []
                         st.balloons()
-                        st.success("Venda integrada ao Supabase!")
                         st.rerun()
                     except Exception as err:
                         st.error(f"Falha ao salvar no banco: {err}")
 
 # -----------------------------------------------------------------------------------------
-# TELA 2: CONTROLE DE ESTOQUE
+# TELA 2: CADASTRO DE CLIENTES (NOVA TELA)
+# -----------------------------------------------------------------------------------------
+elif tela == "👥 Cadastro de Clientes":
+    st.title("👥 Gestão e Cadastro de Clientes")
+    
+    try:
+        df_clientes = conn.query("SELECT * FROM clientes ORDER BY nome;", ttl="0s")
+    except Exception as e:
+        st.error(f"Erro ao carregar clientes: {e}")
+        df_clientes = pd.DataFrame()
+        
+    busca_cli = st.text_input("🔍 Buscar Cliente", placeholder="Digite o nome ou bairro do cliente...")
+    if busca_cli and not df_clientes.empty:
+        df_clientes = df_clientes[
+            df_clientes["nome"].str.contains(busca_cli, case=False, na=False) | 
+            df_clientes["bairro"].str.contains(busca_cli, case=False, na=False)
+        ]
+        
+    st.subheader("📋 Clientes Registrados")
+    if not df_clientes.empty:
+        st.dataframe(df_clientes[['nome', 'whatsapp', 'endereco', 'bairro', 'observacoes']].rename(columns={
+            'nome': 'Nome do Cliente', 'whatsapp': 'WhatsApp/Celular', 'endereco': 'Endereço', 'bairro': 'Bairro', 'observacoes': 'Notas/Obs'
+        }), use_container_width=True)
+    else:
+        st.info("Nenhum cliente cadastrado ou encontrado.")
+        
+    st.divider()
+    st.subheader("➕ Registrar Novo Cliente")
+    with st.form("cadastro_cliente"):
+        c_nome = st.text_input("Nome Completo")
+        c_whats = st.text_input("WhatsApp (Ex: 85999999999 - Apenas números com DDD)")
+        c_end = st.text_input("Endereço (Rua, Número, Apto)")
+        c_bairro = st.text_input("Bairro")
+        c_obs = st.text_area("Observações de Entrega / Notas")
+        
+        salvar_cliente = st.form_submit_button("💾 Salvar Cliente")
+        
+        if salvar_cliente and c_nome and c_whats:
+            try:
+                with conn.session as session:
+                    session.execute(
+                        text("""
+                            INSERT INTO clientes (nome, whatsapp, endereco, bairro, observacoes)
+                            VALUES (:nome, :whats, :end, :bairro, :obs);
+                        """),
+                        {"nome": c_nome, "whats": c_whats, "end": c_end, "bairro": c_bairro, "obs": c_obs}
+                    )
+                    session.commit()
+                st.success(f"Cliente '{c_nome}' cadastrado com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao cadastrar cliente: {e}")
+        elif salvar_cliente:
+            st.warning("Por favor, preencha pelo menos o Nome e o WhatsApp do cliente.")
+
+# -----------------------------------------------------------------------------------------
+# TELA 3: CONTROLE DE ESTOQUE
 # -----------------------------------------------------------------------------------------
 elif tela == "📦 Controle de Estoque":
     st.title("📦 Controle de Estoque Profissional")
@@ -270,7 +362,7 @@ elif tela == "📦 Controle de Estoque":
                     )
                     registrar_movimentacao(session, produto_ajuste, "AJUSTE", (nova_qtd - qtd_atual), qtd_atual, nova_qtd, "Ajuste manual de inventário")
                     session.commit()
-                st.success("Estoque updated!")
+                st.success("Estoque atualizado!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro: {e}")
@@ -294,7 +386,7 @@ elif tela == "📦 Controle de Estoque":
                 st.error(f"Erro: {e}")
 
 # -----------------------------------------------------------------------------------------
-# TELA 3: EXTRATO DE MOVIMENTAÇÕES
+# TELA 4: EXTRATO DE MOVIMENTAÇÕES
 # -----------------------------------------------------------------------------------------
 elif tela == "📋 Extrato do Estoque":
     st.title("📋 Extrato e Auditoria de Estoque")
@@ -315,7 +407,7 @@ elif tela == "📋 Extrato do Estoque":
         st.dataframe(df_mov_friendly, use_container_width=True)
 
 # -----------------------------------------------------------------------------------------
-# TELA 4: PAINEL FINANCEIRO PRO
+# TELA 5: PAINEL FINANCEIRO PRO
 # -----------------------------------------------------------------------------------------
 else:
     st.title("📊 Painel Financeiro & Dashboard Gerencial")
@@ -367,5 +459,5 @@ else:
         
         st.markdown("### 📋 Histórico Geral de Vendas")
         st.dataframe(df_vendas[['data_hora', 'produto', 'quantidade', 'valor_total', 'lucro', 'pagamento']].rename(columns={
-            'data_hora': 'Data/Hora', 'item': 'produto', 'quantidade': 'Qtd Vendida', 'valor_total': 'Total (R$)', 'lucro': 'Lucro (R$)', 'pagamento': 'Pagamento'
+            'data_hora': 'Data/Hora', 'produto': 'Item', 'quantidade': 'Qtd Vendida', 'valor_total': 'Total (R$)', 'lucro': 'Lucro (R$)', 'pagamento': 'Pagamento'
         }), use_container_width=True)
